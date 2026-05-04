@@ -39,7 +39,7 @@ Follow these steps to add your SIP account in Linphone (desktop or mobile).
 | Field | Value |
 |---|---|
 | **SIP address / Username** | Your 3-digit extension (e.g. `101`) |
-| **SIP domain / Server address** | Your PBX domain (e.g. `pbx.example.com`) |
+| **SIP domain / Server address** | `pbx.vouchersdept.com` |
 | **Password** | Your extension password (≥ 12 mixed alphanumeric characters) |
 | **Display name** | Your name (e.g. `Alice Smith`) |
 | **Transport** | `TLS` |
@@ -177,7 +177,7 @@ You may also dial US and Canada numbers in 11-digit format starting with `1`
    **5061**. Plain SIP (port 5060) is blocked.
 3. **Check server reachability** — ping the PBX domain from a terminal:
    ```
-   ping pbx.example.com
+   ping pbx.vouchersdept.com
    ```
 4. **Check Windows portproxy** — on the Windows host, run:
    ```powershell

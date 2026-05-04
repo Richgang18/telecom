@@ -24,7 +24,7 @@ from pathlib import Path
 
 # The SIP domain whose DNS A record must point to the Windows 11 host's
 # public IP address before running certbot.
-SIP_DOMAIN: str = "pbx.example.com"
+SIP_DOMAIN: str = "pbx.vouchersdept.com"
 
 # Paths used by certbot and Asterisk
 CERTBOT_LIVE_DIR: str = "/etc/letsencrypt/live"

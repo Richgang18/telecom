@@ -36,9 +36,9 @@ def read_os_release(path: str = "/etc/os-release") -> dict[str, str]:
 
 def verify_ubuntu_2204(os_release: dict[str, str] | None = None) -> bool:
     """
-    Return True if the current OS is Ubuntu 22.04.
+    Return True if the current OS is Ubuntu 22.04 or 24.04.
 
-    Raises RuntimeError if the OS is not Ubuntu 22.04.
+    Raises RuntimeError if the OS is not a supported Ubuntu version.
     """
     if os_release is None:
         os_release = read_os_release()
@@ -46,12 +46,14 @@ def verify_ubuntu_2204(os_release: dict[str, str] | None = None) -> bool:
     distro_id = os_release.get("ID", "").lower()
     version_id = os_release.get("VERSION_ID", "")
 
-    if distro_id == "ubuntu" and version_id == "22.04":
+    supported_versions = {"22.04", "24.04"}
+
+    if distro_id == "ubuntu" and version_id in supported_versions:
         return True
 
     raise RuntimeError(
         f"Unsupported OS: ID={distro_id!r}, VERSION_ID={version_id!r}. "
-        "This script requires Ubuntu 22.04."
+        f"This script requires Ubuntu 22.04 or 24.04."
     )
 
 

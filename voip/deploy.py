@@ -164,12 +164,27 @@ def _step_generate_pjsip() -> None:
 def _step_generate_dialplan() -> None:
     """Generate extensions.conf via generate_dialplan.py."""
     import os
-    from generate_dialplan import write_extensions_conf
+    from generate_dialplan import write_extensions_conf, write_extensions_conf_with_rotation
 
     extensions = [str(i) for i in range(101, 106)]
-    trunk_name = os.environ.get("VOIP_TRUNK_NAME", "voipms-trunk")
-    did = os.environ.get("VOIP_TRUNK_DID", "+10000000000")
-    write_extensions_conf(extensions, trunk_name, did)
+    trunk_name = os.environ.get("VOIP_TRUNK_NAME", "twilio-trunk")
+
+    # Support multiple DIDs for round-robin rotation
+    # Set VOIP_TRUNK_DIDS as a comma-separated list, e.g. "+12025551001,+12025551002"
+    # Falls back to single VOIP_TRUNK_DID if only one number
+    dids_env = os.environ.get("VOIP_TRUNK_DIDS", "")
+    if dids_env:
+        dids = [d.strip() for d in dids_env.split(",") if d.strip()]
+    else:
+        single_did = os.environ.get("VOIP_TRUNK_DID", "+10000000000")
+        dids = [single_did]
+
+    if len(dids) > 1:
+        print(f"  DID rotation enabled: {len(dids)} numbers in pool")
+        write_extensions_conf_with_rotation(extensions, trunk_name, dids)
+    else:
+        print(f"  Single DID mode: {dids[0]}")
+        write_extensions_conf(extensions, trunk_name, dids[0])
 
 
 def _step_setup_cdr() -> None:
