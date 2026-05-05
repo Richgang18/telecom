@@ -74,28 +74,38 @@ def install_certbot() -> None:
 
 def obtain_certificate(domain: str) -> None:
     """
-    Run ``certbot certonly --standalone`` for *domain*.
+    Run ``certbot certonly --manual --preferred-challenges dns`` for *domain*.
 
-    The domain's DNS A record must already resolve to this machine's public IP
-    before calling this function (certbot uses HTTP-01 challenge on port 80).
+    Uses DNS-01 challenge — no port 80 required. Certbot will print a TXT
+    record value that must be added to DNS before pressing Enter to continue.
 
     Parameters
     ----------
     domain:
         The fully-qualified domain name for the SIP server (e.g.
-        ``pbx.example.com``).
+        ``pbx.vouchersdept.com``).
 
     Raises
     ------
     subprocess.CalledProcessError
         If certbot exits with a non-zero status.
     """
+    print(
+        "\n[setup_tls] DNS challenge mode — no port 80 needed.\n"
+        "Certbot will give you a TXT record to add to your DNS.\n"
+        "Steps:\n"
+        "  1. Certbot prints a TXT record value\n"
+        "  2. Go to GoDaddy DNS settings for vouchersdept.com\n"
+        "  3. Add a TXT record: name=_acme-challenge.pbx, value=<printed value>\n"
+        "  4. Wait 30 seconds for DNS to propagate\n"
+        "  5. Press Enter in this terminal to continue\n"
+    )
     subprocess.run(
         [
             "certbot",
             "certonly",
-            "--standalone",
-            "--non-interactive",
+            "--manual",
+            "--preferred-challenges", "dns",
             "--agree-tos",
             "--register-unsafely-without-email",
             "-d",
