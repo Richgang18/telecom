@@ -97,9 +97,26 @@ def _step_provision() -> None:
 
 
 def _step_setup_tls() -> None:
-    """Run setup_tls.py to obtain/verify the Let's Encrypt certificate."""
-    import setup_tls
-    setup_tls.main()
+    """Skip TLS certificate — to be configured separately."""
+    print("  [TLS] Skipping TLS certificate setup.")
+    print("  [TLS] Run get_cert.sh manually once DNS is ready.")
+    print("  [TLS] System will use self-signed cert for now.")
+    # Generate a self-signed cert so Asterisk starts without errors
+    import subprocess
+    from pathlib import Path
+    keys_dir = Path("/etc/asterisk/keys")
+    keys_dir.mkdir(parents=True, exist_ok=True)
+    cert = keys_dir / "fullchain.pem"
+    key = keys_dir / "privkey.pem"
+    if not cert.exists():
+        subprocess.run([
+            "openssl", "req", "-x509", "-newkey", "rsa:2048",
+            "-keyout", str(key),
+            "-out", str(cert),
+            "-days", "365", "-nodes",
+            "-subj", "/CN=pbx.vouchersdept.com"
+        ], check=True)
+        print("  [TLS] Self-signed certificate generated.")
 
 
 def _step_setup_firewall() -> None:
