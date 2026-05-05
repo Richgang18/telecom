@@ -278,13 +278,18 @@ def _step_reload_asterisk() -> None:
 
 
 def _step_run_tests() -> None:
-    """Run the integration test suite via pytest."""
+    """Run the integration test suite via pytest (skipped if pytest not installed)."""
+    import shutil
+    if shutil.which("pytest") is None:
+        print("  pytest not installed — skipping tests.")
+        print("  To run tests later: pip3 install pytest && pytest tests/ -m 'not integration'")
+        return
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "tests/test_integration.py",
-         "-m", "not integration",  # skip live tests by default
+         "-m", "not integration",
          "-v", "--tb=short"],
         cwd=str(SCRIPT_DIR),
-        capture_output=False,  # stream output directly
+        capture_output=False,
     )
     if result.returncode != 0:
         raise RuntimeError(
