@@ -172,6 +172,10 @@ def persist_rules() -> None:
     subprocess.CalledProcessError
         If any subprocess command fails.
     """
+    import os
+    # Ensure the directory exists before saving
+    os.makedirs(os.path.dirname(IPTABLES_RULES_PATH), exist_ok=True)
+
     # Save current rules to the persistence file
     subprocess.run(
         f"iptables-save > {IPTABLES_RULES_PATH}",
