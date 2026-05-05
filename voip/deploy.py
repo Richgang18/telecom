@@ -223,9 +223,32 @@ def _step_setup_windows_host() -> None:
     When running inside WSL2, powershell.exe is available on the PATH
     (it resolves to the Windows PowerShell binary via WSL interop).
     """
+    import shutil
     script_path = WINDOWS_HOST_SCRIPT
+
+    # Find powershell.exe — location varies by Windows version
+    ps_candidates = [
+        "powershell.exe",
+        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+        "/mnt/c/Windows/SysWOW64/WindowsPowerShell/v1.0/powershell.exe",
+    ]
+    ps_exe = None
+    for candidate in ps_candidates:
+        if shutil.which(candidate) or Path(candidate).exists():
+            ps_exe = candidate
+            break
+
+    if ps_exe is None:
+        print(
+            "  WARNING: powershell.exe not found in WSL2 PATH.\n"
+            "  Run setup_windows_host.ps1 manually on Windows:\n"
+            "    1. Open PowerShell as Administrator\n"
+            f"   2. Run: {WINDOWS_HOST_SCRIPT.replace('/mnt/c', 'C:').replace('/', chr(92))}"
+        )
+        return
+
     result = subprocess.run(
-        ["powershell.exe", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+        [ps_exe, "-NonInteractive", "-ExecutionPolicy", "Bypass",
          "-File", script_path],
         capture_output=True,
         text=True,
