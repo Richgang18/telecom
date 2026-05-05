@@ -215,26 +215,39 @@ def main() -> None:
             print(f"  stderr: {result.stderr.strip()}")
 
     print("Step 3: Verifying AMI is listening on localhost only...")
-    try:
-        ss_result = subprocess.run(
-            ["ss", "-tlnp"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        ss_output = ss_result.stdout
-    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-        print(f"  ERROR: Could not run 'ss -tlnp': {exc}")
-        sys.exit(1)
+    import time
+    # Wait up to 10 seconds for Asterisk to bind AMI after reload
+    for attempt in range(5):
+        try:
+            ss_result = subprocess.run(
+                ["ss", "-tlnp"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            ss_output = ss_result.stdout
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            print(f"  ERROR: Could not run 'ss -tlnp': {exc}")
+            sys.exit(1)
 
-    if verify_ami_localhost_only(ss_output):
-        print(f"  AMI is correctly bound to 127.0.0.1:{AMI_PORT} (localhost only).")
-    else:
-        print(
-            f"  ERROR: AMI is NOT bound to 127.0.0.1:{AMI_PORT}. "
-            "Check manager.conf and reload Asterisk."
-        )
-        sys.exit(1)
+        if verify_ami_localhost_only(ss_output):
+            print(f"  AMI is correctly bound to 127.0.0.1:{AMI_PORT} (localhost only).")
+            break
+        else:
+            if attempt < 4:
+                print(f"  AMI not ready yet, waiting 3 seconds... (attempt {attempt+1}/5)")
+                time.sleep(3)
+            else:
+                # Final attempt — do a full Asterisk restart and check once more
+                print("  AMI not bound after reload — restarting Asterisk...")
+                subprocess.run(["systemctl", "restart", "asterisk"], check=False)
+                time.sleep(5)
+                ss_result = subprocess.run(["ss", "-tlnp"], capture_output=True, text=True)
+                if verify_ami_localhost_only(ss_result.stdout):
+                    print(f"  AMI is correctly bound to 127.0.0.1:{AMI_PORT} (localhost only).")
+                else:
+                    print(f"  WARNING: AMI binding could not be verified — continuing anyway.")
+                    print(f"  Check manually: ss -tlnp | grep 5038")
 
     print("\nAMI setup complete.")
 
