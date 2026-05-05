@@ -74,42 +74,72 @@ def install_certbot() -> None:
 
 def obtain_certificate(domain: str) -> None:
     """
-    Run ``certbot certonly --manual --preferred-challenges dns`` for *domain*.
+    Run certbot with DNS challenge using certbot-dns-godaddy plugin.
 
-    Uses DNS-01 challenge — no port 80 required. Certbot will print a TXT
-    record value that must be added to DNS before pressing Enter to continue.
+    Fully automated — no manual DNS steps required. Certbot uses the
+    GoDaddy API to create and delete the TXT record automatically.
+
+    Requires environment variables:
+      GODADDY_API_KEY    — GoDaddy API key
+      GODADDY_API_SECRET — GoDaddy API secret
 
     Parameters
     ----------
     domain:
-        The fully-qualified domain name for the SIP server (e.g.
-        ``pbx.vouchersdept.com``).
+        The fully-qualified domain name for the SIP server.
 
     Raises
     ------
     subprocess.CalledProcessError
         If certbot exits with a non-zero status.
+    RuntimeError
+        If GoDaddy API credentials are not set.
     """
-    print(
-        "\n[setup_tls] DNS challenge mode — no port 80 needed.\n"
-        "Certbot will give you a TXT record to add to your DNS.\n"
-        "Steps:\n"
-        "  1. Certbot prints a TXT record value\n"
-        "  2. Go to GoDaddy DNS settings for vouchersdept.com\n"
-        "  3. Add a TXT record: name=_acme-challenge.pbx, value=<printed value>\n"
-        "  4. Wait 30 seconds for DNS to propagate\n"
-        "  5. Press Enter in this terminal to continue\n"
+    import os
+
+    api_key = os.environ.get("GODADDY_API_KEY", "")
+    api_secret = os.environ.get("GODADDY_API_SECRET", "")
+
+    if not api_key or not api_secret:
+        raise RuntimeError(
+            "GoDaddy API credentials not set.\n"
+            "Get your API key from: https://developer.godaddy.com/keys\n"
+            "Then run:\n"
+            "  export GODADDY_API_KEY=your_key\n"
+            "  export GODADDY_API_SECRET=your_secret\n"
+            "  sudo -E python3 deploy.py"
+        )
+
+    # Install certbot-dns-godaddy plugin
+    subprocess.run(
+        ["pip3", "install", "certbot-dns-godaddy==0.1.1"],
+        check=True,
     )
+
+    # Write GoDaddy credentials file
+    creds_path = Path("/etc/letsencrypt/godaddy.ini")
+    creds_path.parent.mkdir(parents=True, exist_ok=True)
+    creds_path.write_text(
+        f"dns_godaddy_secret = {api_secret}\n"
+        f"dns_godaddy_key = {api_key}\n"
+    )
+    import os as _os
+    _os.chmod(creds_path, 0o600)
+
+    print(f"[setup_tls] GoDaddy credentials written to {creds_path}")
+    print(f"[setup_tls] Running certbot with automated DNS challenge...")
+
     subprocess.run(
         [
             "certbot",
             "certonly",
-            "--manual",
-            "--preferred-challenges", "dns",
+            "--authenticator", "dns-godaddy",
+            "--dns-godaddy-credentials", str(creds_path),
+            "--dns-godaddy-propagation-seconds", "60",
+            "--non-interactive",
             "--agree-tos",
             "--register-unsafely-without-email",
-            "-d",
-            domain,
+            "-d", domain,
         ],
         check=True,
     )
