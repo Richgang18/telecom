@@ -14,7 +14,7 @@ if [ -z "$GODADDY_API_KEY" ] || [ -z "$GODADDY_API_SECRET" ]; then
 fi
 
 echo "[get_cert] Installing certbot-dns-godaddy plugin..."
-pip3 install certbot-dns-godaddy==0.1.1
+pip3 install certbot-dns-godaddy==0.1.1 --break-system-packages
 
 echo "[get_cert] Writing GoDaddy credentials..."
 mkdir -p /etc/letsencrypt
