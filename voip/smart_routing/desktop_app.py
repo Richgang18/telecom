@@ -924,14 +924,12 @@ class DialerApp:
             messagebox.showerror("Error", "Webhook URL not configured. Please check Settings tab.")
             return
         
-        # Check if services are running
-        try:
-            requests.get("http://localhost:5000/status", timeout=2)
-        except:
+        # Check if webhook server process is running (don't rely on HTTP check)
+        if not self.webhook_process or self.webhook_process.poll() is not None:
             if messagebox.askyesno("Services Not Running", 
                                    "Webhook server is not running. Start services now?"):
                 self.start_services()
-                self.root.after(3000, self.start_calling)  # Retry after services start
+                self.root.after(5000, self.start_calling)  # Retry after services start
                 return
             else:
                 return
