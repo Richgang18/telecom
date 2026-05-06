@@ -49,6 +49,8 @@ class AgentRouter:
         self.max_concurrent = int(cfg.get("max_concurrent_calls", "2"))
 
         self._lock = threading.Lock()
+        self._availability_event = threading.Event()  # Signal when agent becomes available
+        
         # {extension: {"name": str, "status": "available"|"busy", "call_sid": str|None}}
         self._agents: dict[str, dict] = {
             ext: {"name": name, "status": "available", "call_sid": None}
@@ -91,6 +93,10 @@ class AgentRouter:
                 self._agents[extension]["status"] = "busy"
                 self._agents[extension]["call_sid"] = call_sid
                 self.logger.info("Agent %s marked busy (call %s)", extension, call_sid)
+                
+                # Check if all agents are now busy
+                if self.available_count() == 0:
+                    self.logger.warning("⚠️  All agents busy - dialing will pause until one becomes available")
 
     def mark_available(self, extension: str) -> None:
         """Mark an agent as available (call ended)."""
@@ -98,12 +104,42 @@ class AgentRouter:
             if extension in self._agents:
                 self._agents[extension]["status"] = "available"
                 self._agents[extension]["call_sid"] = None
-                self.logger.info("Agent %s marked available", extension)
+                self.logger.info("✅ Agent %s marked available - resuming dialing", extension)
+                
+                # Signal that an agent is now available
+                self._availability_event.set()
 
     def status(self) -> dict[str, dict]:
         """Return a copy of the current agent status dict."""
         with self._lock:
             return {ext: dict(info) for ext, info in self._agents.items()}
+    
+    def wait_for_available_agent(self, timeout: float = None) -> bool:
+        """
+        Block until at least one agent becomes available.
+        
+        Parameters
+        ----------
+        timeout:
+            Maximum time to wait in seconds. None = wait indefinitely.
+        
+        Returns
+        -------
+        bool
+            True if an agent is available, False if timeout occurred.
+        """
+        # Check if already available
+        if self.available_count() > 0:
+            return True
+        
+        # Clear the event and wait for it to be set
+        self._availability_event.clear()
+        result = self._availability_event.wait(timeout)
+        
+        # Clear the event for next wait
+        self._availability_event.clear()
+        
+        return result and self.available_count() > 0
 
     def generate_connect_twiml(self, extension: str, webhook_base: str) -> str:
         """

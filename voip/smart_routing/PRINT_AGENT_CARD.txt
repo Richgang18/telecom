@@ -1,0 +1,159 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                    LINPHONE AGENT SETUP CARD                              ║
+║                   VoIP Outbound Calling System                            ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                                                                           ║
+║  ┌─────────────────────────────────────────────────────────────────────┐ ║
+║  │                        AGENT 1 CREDENTIALS                          │ ║
+║  ├─────────────────────────────────────────────────────────────────────┤ ║
+║  │  Username:     101                                                  │ ║
+║  │  Password:     ChangeMe101!                                         │ ║
+║  │  Domain:       pbx.vouchersdept.com                                 │ ║
+║  │  Transport:    TLS                                                  │ ║
+║  │  Port:         5061                                                 │ ║
+║  └─────────────────────────────────────────────────────────────────────┘ ║
+║                                                                           ║
+║  ┌─────────────────────────────────────────────────────────────────────┐ ║
+║  │                        AGENT 2 CREDENTIALS                          │ ║
+║  ├─────────────────────────────────────────────────────────────────────┤ ║
+║  │  Username:     102                                                  │ ║
+║  │  Password:     ChangeMe102!                                         │ ║
+║  │  Domain:       pbx.vouchersdept.com                                 │ ║
+║  │  Transport:    TLS                                                  │ ║
+║  │  Port:         5061                                                 │ ║
+║  └─────────────────────────────────────────────────────────────────────┘ ║
+║                                                                           ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                          QUICK SETUP STEPS                                ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                                                                           ║
+║  PC SETUP:                                                                ║
+║  1. Download from https://www.linphone.org/                               ║
+║  2. Menu → Settings → Accounts → Add Account                              ║
+║  3. Enter your credentials (above)                                        ║
+║  4. Advanced: Transport=TLS, Port=5061                                    ║
+║  5. Verify GREEN status = Registered                                      ║
+║                                                                           ║
+║  MOBILE SETUP:                                                            ║
+║  1. Install "Linphone" from Play Store / App Store                        ║
+║  2. Menu → Settings → Accounts → Add Account                              ║
+║  3. Enter your credentials (above)                                        ║
+║  4. Advanced: Transport=TLS, Port=5061                                    ║
+║  5. Enable: Microphone, Notifications, Background                         ║
+║                                                                           ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                         STATUS INDICATORS                                 ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                                                                           ║
+║  🟢 GREEN    = Registered - Ready to receive calls                        ║
+║  🔴 RED      = Not registered - Check settings                            ║
+║  🟡 YELLOW   = Connecting - Wait a moment                                 ║
+║                                                                           ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                        PRE-SHIFT CHECKLIST                                ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                                                                           ║
+║  [ ] Linphone running                                                     ║
+║  [ ] Status is GREEN / "Registered"                                       ║
+║  [ ] Headset connected and tested                                         ║
+║  [ ] Internet connection stable                                           ║
+║  [ ] Notifications enabled                                                ║
+║  [ ] Quiet environment                                                    ║
+║                                                                           ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                       TROUBLESHOOTING                                     ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                                                                           ║
+║  NOT REGISTERED (RED)?                                                    ║
+║  → Check internet connection                                              ║
+║  → Verify username/password correct                                       ║
+║  → Check Transport=TLS, Port=5061                                         ║
+║  → Restart Linphone                                                       ║
+║                                                                           ║
+║  NO AUDIO?                                                                ║
+║  → Check headset connected                                                ║
+║  → Test audio in Settings → Audio                                         ║
+║  → Check volume levels                                                    ║
+║  → Try different headset                                                  ║
+║                                                                           ║
+║  CALLS NOT COMING THROUGH?                                                ║
+║  → Check status is GREEN                                                  ║
+║  → Enable notifications                                                   ║
+║  → Keep app running in background                                         ║
+║  → Disable battery optimization (Android)                                 ║
+║                                                                           ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                          CALL FLOW                                        ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                                                                           ║
+║  1. Linphone rings 🔔                                                     ║
+║  2. Click "Answer"                                                        ║
+║  3. Greet customer professionally                                         ║
+║  4. Handle conversation                                                   ║
+║  5. Click "Hang Up" when done                                             ║
+║  6. Update notes/CRM                                                      ║
+║  7. Ready for next call 🔄                                                ║
+║                                                                           ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                      RECOMMENDED EQUIPMENT                                ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                                                                           ║
+║  BUDGET HEADSETS ($20-50):                                                ║
+║  • Logitech H390 USB Headset                                              ║
+║  • Jabra Evolve 20                                                        ║
+║  • Plantronics Blackwire C3220                                            ║
+║                                                                           ║
+║  PROFESSIONAL ($50-150):                                                  ║
+║  • Jabra Evolve 40                                                        ║
+║  • Plantronics Voyager Focus UC                                           ║
+║                                                                           ║
+║  MOBILE:                                                                  ║
+║  • Any wired earbuds with microphone                                      ║
+║                                                                           ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                         BEST PRACTICES                                    ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                                                                           ║
+║  ✓ Use wired headset (better than Bluetooth)                              ║
+║  ✓ Quiet environment (minimize background noise)                          ║
+║  ✓ Strong WiFi connection (better than mobile data)                       ║
+║  ✓ Test audio before shift                                                ║
+║  ✓ Answer calls quickly                                                   ║
+║  ✓ Speak clearly and professionally                                       ║
+║  ✓ Take notes during calls                                                ║
+║                                                                           ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                         SECURITY REMINDERS                                ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                                                                           ║
+║  ✗ Don't share your credentials                                           ║
+║  ✗ Don't write down passwords in plain text                               ║
+║  ✓ Use secure connection (TLS enabled)                                    ║
+║  ✓ Log out when not working                                               ║
+║  ✓ Secure your device with PIN/password                                   ║
+║                                                                           ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                           NEED HELP?                                      ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                                                                           ║
+║  1. Check full guide: LINPHONE_SETUP_GUIDE.md                             ║
+║  2. Contact your supervisor for basic issues                              ║
+║  3. Contact IT/System Admin for technical problems                        ║
+║                                                                           ║
+║  Linphone Documentation: https://wiki.linphone.org/                       ║
+║  Video Tutorials: Search "Linphone setup" on YouTube                      ║
+║                                                                           ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                                                                           ║
+║  ✅ YOU'RE READY WHEN:                                                    ║
+║     • Status shows GREEN / "Registered"                                   ║
+║     • Audio test passed                                                   ║
+║     • Headset working                                                     ║
+║                                                                           ║
+║  🎉 WELCOME TO THE TEAM! HAPPY CALLING! 📞                                ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+Version 1.0 | Updated: May 7, 2026 | VoIP Outbound Calling System
+
+PRINT THIS CARD AND KEEP IT AT YOUR DESK!

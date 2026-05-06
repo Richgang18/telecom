@@ -220,15 +220,24 @@ class SmartDialer:
             available = self.router.available_count()
 
             if available == 0:
-                self.logger.info("All agents busy — waiting...")
-                time.sleep(2)
-                continue
+                self.logger.info(
+                    "⏸️  All %d agents busy — pausing dialer until one becomes available...",
+                    self.max_concurrent
+                )
+                # Wait for an agent to become available (with 60 second timeout as safety)
+                if self.router.wait_for_available_agent(timeout=60):
+                    self.logger.info("✅ Agent available — resuming dialing")
+                    continue
+                else:
+                    # Timeout occurred, check again
+                    self.logger.warning("⚠️  Timeout waiting for agent — checking status...")
+                    continue
 
             # Dial up to available agent count
             batch_size = min(available, total - index)
             self.logger.info(
-                "Batch: dialing %d contact(s) (%d/%d total)",
-                batch_size, index + batch_size, total,
+                "Batch: dialing %d contact(s) (%d/%d total) — %d agents available",
+                batch_size, index + batch_size, total, available,
             )
 
             for _ in range(batch_size):
@@ -241,6 +250,7 @@ class SmartDialer:
                 index += 1
                 dialed += 1
 
+            # Small delay between batches to avoid overwhelming Twilio API
             time.sleep(self.batch_delay)
 
         self.logger.info(
