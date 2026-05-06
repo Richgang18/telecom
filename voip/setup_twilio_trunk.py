@@ -42,7 +42,7 @@ def create_trunk(account_sid, auth_token, trunk_name="Dataism VoIP"):
     if resp.status_code == 201:
         trunk = resp.json()
         print(f"✓ Trunk created: {trunk['sid']}")
-        print(f"  Domain: {trunk['domain_name']}.pstn.twilio.com")
+        print(f"  Domain: {trunk['domain_name']}")
         return trunk
     else:
         print(f"✗ Failed to create trunk: {resp.status_code}")
@@ -62,8 +62,8 @@ def create_credential_list(account_sid, auth_token, username="asterisk", passwor
         cred_list_sid = cred_list['sid']
         print(f"✓ Credential list created: {cred_list_sid}")
         
-        # Add credential to the list
-        cred_url = f"{url}/{cred_list_sid}/Credentials.json"
+        # Add credential to the list — URL without .json suffix for nested resource
+        cred_url = f"{TWILIO_API_BASE}/Accounts/{account_sid}/SIP/CredentialLists/{cred_list_sid}/Credentials.json"
         cred_data = {"Username": username, "Password": password}
         cred_resp = requests.post(cred_url, auth=auth, data=cred_data)
         
@@ -79,6 +79,7 @@ def create_credential_list(account_sid, auth_token, username="asterisk", passwor
         print(resp.text)
         return None, None, None
 
+
 def create_ip_access_list(account_sid, auth_token, public_ip):
     """Create an IP access control list."""
     url = f"{TWILIO_API_BASE}/Accounts/{account_sid}/SIP/IpAccessControlLists.json"
@@ -92,8 +93,8 @@ def create_ip_access_list(account_sid, auth_token, public_ip):
         acl_sid = acl['sid']
         print(f"✓ IP ACL created: {acl_sid}")
         
-        # Add IP to the list
-        ip_url = f"{url}/{acl_sid}/IpAddresses.json"
+        # Add IP to the list — URL without .json suffix for nested resource
+        ip_url = f"{TWILIO_API_BASE}/Accounts/{account_sid}/SIP/IpAccessControlLists/{acl_sid}/IpAddresses.json"
         ip_data = {"FriendlyName": "WSL2 Server", "IpAddress": public_ip}
         ip_resp = requests.post(ip_url, auth=auth, data=ip_data)
         
@@ -194,7 +195,7 @@ def main():
     
     print("=== Setup Complete ===\n")
     print(f"Trunk SID:       {trunk_sid}")
-    print(f"SIP Domain:      {domain}.pstn.twilio.com")
+    print(f"SIP Domain:      {domain}")
     print(f"SIP Username:    {username}")
     print(f"SIP Password:    {password}")
     print(f"Whitelisted IP:  {public_ip}")
