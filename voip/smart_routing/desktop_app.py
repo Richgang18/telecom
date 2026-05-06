@@ -846,27 +846,38 @@ class DialerApp:
                 )
                 self.log_message("Webhook server started")
             
-            # Start ngrok - use Downloads folder directly
+            # Start ngrok - check multiple locations
             if not self.ngrok_process or self.ngrok_process.poll() is not None:
-                ngrok_path = Path("C:/Users/Admin/Downloads/ngrok.exe")
+                # Try multiple ngrok locations
+                ngrok_locations = [
+                    Path("C:/Users/Admin/Downloads/ngrok-v3-stable-windows-amd64/ngrok.exe"),
+                    Path("C:/Users/Admin/Downloads/ngrok.exe"),
+                ]
                 
-                if ngrok_path.exists():
+                ngrok_path = None
+                for loc in ngrok_locations:
+                    if loc.exists():
+                        ngrok_path = loc
+                        break
+                
+                if ngrok_path:
                     self.ngrok_process = subprocess.Popen(
                         [str(ngrok_path), "http", "5000"],
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
-                    self.log_message(f"Ngrok started from Downloads folder")
+                    self.log_message(f"Ngrok started from {ngrok_path}")
                     # Wait for ngrok to start and auto-detect URL
                     self.root.after(3000, self.detect_ngrok_url)
                 else:
-                    self.log_message("ERROR: ngrok.exe not found in C:/Users/Admin/Downloads/")
+                    self.log_message("ERROR: ngrok.exe not found")
                     messagebox.showerror("Ngrok Not Found",
-                        "ngrok.exe not found in Downloads folder.\n\n"
-                        "Expected location:\n"
-                        "C:/Users/Admin/Downloads/ngrok.exe\n\n"
-                        "Please place ngrok.exe there.")
+                        "ngrok.exe not found.\n\n"
+                        "Checked locations:\n"
+                        "- C:/Users/Admin/Downloads/ngrok-v3-stable-windows-amd64/ngrok.exe\n"
+                        "- C:/Users/Admin/Downloads/ngrok.exe\n\n"
+                        "Please extract ngrok.exe to Downloads folder.")
             
             messagebox.showinfo("Services Started", 
                 "Webhook server and ngrok started!\n\n"
@@ -1026,12 +1037,12 @@ class DialerApp:
         # Check Asterisk
         try:
             result = subprocess.run(
-                ["asterisk", "-rx", "core show version"],
+                ["sudo", "-n", "asterisk", "-rx", "core show version"],
                 capture_output=True,
                 text=True,
                 timeout=2
             )
-            if result.returncode == 0:
+            if result.returncode == 0 and "Asterisk" in result.stdout:
                 self.asterisk_status.config(foreground="green")
                 self.asterisk_label.config(text="Running")
             else:
