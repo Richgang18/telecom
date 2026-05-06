@@ -902,11 +902,12 @@ class DialerApp:
                 
                 if loc:
                     try:
-                        # Start ngrok without hiding window to see errors
+                        # Start ngrok and capture output
                         self.ngrok_process = subprocess.Popen(
-                            [str(loc), "http", "5000", "--log=stdout"],
+                            [str(loc), "http", "5000"],
                             stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT,
+                            text=True,
                             creationflags=0  # Show window for debugging
                         )
                         self.log_message(f"Ngrok process started (PID: {self.ngrok_process.pid})")
@@ -916,15 +917,23 @@ class DialerApp:
                         import time
                         time.sleep(2)
                         if self.ngrok_process.poll() is not None:
-                            # Process died
+                            # Process died - get output
+                            output, _ = self.ngrok_process.communicate(timeout=1)
                             self.log_message("ERROR: Ngrok died immediately!")
-                            self.log_message("Check if ngrok authtoken is configured")
-                            self.log_message("Run: ngrok config add-authtoken YOUR_TOKEN")
+                            self.log_message(f"Ngrok output: {output[:500]}")
+                            
+                            # Check for common errors
+                            if "authtoken" in output.lower():
+                                error_msg = "Authtoken error. Please configure:\nngrok config add-authtoken YOUR_TOKEN"
+                            elif "account" in output.lower():
+                                error_msg = "Account limit reached. Check your ngrok dashboard."
+                            elif "port" in output.lower() or "address" in output.lower():
+                                error_msg = "Port 5000 might be in use by another process."
+                            else:
+                                error_msg = f"Ngrok error:\n{output[:200]}"
+                            
                             messagebox.showwarning("Ngrok Error",
-                                "Ngrok failed to start.\n\n"
-                                "Make sure you've configured your authtoken:\n"
-                                "1. Get token from: https://dashboard.ngrok.com\n"
-                                "2. Run: ngrok config add-authtoken YOUR_TOKEN\n\n"
+                                f"Ngrok failed to start.\n\n{error_msg}\n\n"
                                 "Webhook server is still running on port 5000.")
                         else:
                             self.log_message("Ngrok is running, waiting for tunnel...")
