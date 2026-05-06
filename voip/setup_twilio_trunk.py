@@ -35,7 +35,7 @@ def create_trunk(account_sid, auth_token, trunk_name="Dataism VoIP"):
     
     data = {
         "FriendlyName": trunk_name,
-        "DomainName": "dataism-voip"
+        "DomainName": "dataism-voip.pstn.twilio.com"
     }
     
     resp = requests.post(url, auth=auth, data=data)
