@@ -1091,35 +1091,47 @@ class DialerApp:
     
     def update_status(self):
         """Update system status indicators"""
-        # Check Asterisk
+        # Check Asterisk via WSL
         try:
-            # Try with sudo first
+            # Try to check Asterisk via WSL
             result = subprocess.run(
-                ["sudo", "-n", "asterisk", "-rx", "core show version"],
+                ["wsl", "sudo", "-n", "asterisk", "-rx", "core show version"],
                 capture_output=True,
                 text=True,
-                timeout=2
+                timeout=3
             )
             if result.returncode == 0 and "Asterisk" in result.stdout:
                 self.asterisk_status.config(foreground="green")
                 self.asterisk_label.config(text="Running")
-                self.log_message("Asterisk: Running")
+                self.log_message("Asterisk: Running in WSL2")
             else:
                 # Try without sudo
                 result2 = subprocess.run(
-                    ["asterisk", "-rx", "core show version"],
+                    ["wsl", "asterisk", "-rx", "core show version"],
                     capture_output=True,
                     text=True,
-                    timeout=2
+                    timeout=3
                 )
                 if result2.returncode == 0 and "Asterisk" in result2.stdout:
                     self.asterisk_status.config(foreground="green")
                     self.asterisk_label.config(text="Running")
-                    self.log_message("Asterisk: Running")
+                    self.log_message("Asterisk: Running in WSL2")
                 else:
-                    self.asterisk_status.config(foreground="red")
-                    self.asterisk_label.config(text="Not running")
-                    self.log_message(f"Asterisk: Not running - {result2.stderr[:100]}")
+                    # Try checking systemctl status
+                    result3 = subprocess.run(
+                        ["wsl", "systemctl", "is-active", "asterisk"],
+                        capture_output=True,
+                        text=True,
+                        timeout=3
+                    )
+                    if "active" in result3.stdout:
+                        self.asterisk_status.config(foreground="green")
+                        self.asterisk_label.config(text="Running")
+                        self.log_message("Asterisk: Running in WSL2 (systemctl)")
+                    else:
+                        self.asterisk_status.config(foreground="red")
+                        self.asterisk_label.config(text="Not running")
+                        self.log_message(f"Asterisk: Not running - {result3.stdout.strip()}")
         except Exception as e:
             self.asterisk_status.config(foreground="red")
             self.asterisk_label.config(text="Not running")
