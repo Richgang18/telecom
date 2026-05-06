@@ -892,28 +892,44 @@ class DialerApp:
                 ]
                 
                 self.log_message("Searching for ngrok...")
-                for loc in ngrok_locations:
-                    self.log_message(f"  Checking: {loc}")
-                    if loc.exists():
-                        self.log_message(f"  Found: {loc}")
+                loc = None
+                for location in ngrok_locations:
+                    self.log_message(f"  Checking: {location}")
+                    if location.exists():
+                        self.log_message(f"  Found: {location}")
+                        loc = location
                         break
-                else:
-                    loc = None
                 
                 if loc:
                     try:
+                        # Start ngrok without hiding window to see errors
                         self.ngrok_process = subprocess.Popen(
-                            [str(loc), "http", "5000"],
+                            [str(loc), "http", "5000", "--log=stdout"],
                             stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                            stderr=subprocess.STDOUT,
+                            creationflags=0  # Show window for debugging
                         )
                         self.log_message(f"Ngrok process started (PID: {self.ngrok_process.pid})")
                         self.log_message(f"Ngrok location: {loc}")
                         
-                        # Wait for ngrok to start and auto-detect URL
-                        self.log_message("Waiting 3 seconds for ngrok to initialize...")
-                        self.root.after(3000, self.detect_ngrok_url)
+                        # Wait and check if it stays alive
+                        import time
+                        time.sleep(2)
+                        if self.ngrok_process.poll() is not None:
+                            # Process died
+                            self.log_message("ERROR: Ngrok died immediately!")
+                            self.log_message("Check if ngrok authtoken is configured")
+                            self.log_message("Run: ngrok config add-authtoken YOUR_TOKEN")
+                            messagebox.showwarning("Ngrok Error",
+                                "Ngrok failed to start.\n\n"
+                                "Make sure you've configured your authtoken:\n"
+                                "1. Get token from: https://dashboard.ngrok.com\n"
+                                "2. Run: ngrok config add-authtoken YOUR_TOKEN\n\n"
+                                "Webhook server is still running on port 5000.")
+                        else:
+                            self.log_message("Ngrok is running, waiting for tunnel...")
+                            # Wait for ngrok to start and auto-detect URL
+                            self.root.after(3000, self.detect_ngrok_url)
                     except Exception as e:
                         self.log_message(f"ERROR starting ngrok: {e}")
                         messagebox.showerror("Ngrok Error", f"Failed to start ngrok:\n{e}")
@@ -925,7 +941,7 @@ class DialerApp:
                         "- C:/Users/Admin/Downloads/ngrok-v3-stable-windows-amd64/ngrok.exe\n"
                         "- C:/Users/Admin/Downloads/ngrok.exe\n"
                         f"- {APP_DIR}/ngrok.exe\n\n"
-                        "Please place ngrok.exe in one of these locations.")
+                        "Webhook server is still running on port 5000.")
             else:
                 self.log_message("Ngrok already running")
             
@@ -1091,132 +1107,70 @@ class DialerApp:
     
     def update_status(self):
         """Update system status indicators"""
-        # Check Asterisk via WSL
+        # Check Asterisk via WSL (less verbose)
         try:
-            # Try to check Asterisk via WSL
             result = subprocess.run(
-                ["wsl", "sudo", "-n", "asterisk", "-rx", "core show version"],
+                ["wsl", "systemctl", "is-active", "asterisk"],
                 capture_output=True,
                 text=True,
-                timeout=3
+                timeout=2
             )
-            if result.returncode == 0 and "Asterisk" in result.stdout:
+            if "active" in result.stdout:
                 self.asterisk_status.config(foreground="green")
                 self.asterisk_label.config(text="Running")
-                self.log_message("Asterisk: Running in WSL2")
             else:
-                # Try without sudo
-                result2 = subprocess.run(
-                    ["wsl", "asterisk", "-rx", "core show version"],
-                    capture_output=True,
-                    text=True,
-                    timeout=3
-                )
-                if result2.returncode == 0 and "Asterisk" in result2.stdout:
-                    self.asterisk_status.config(foreground="green")
-                    self.asterisk_label.config(text="Running")
-                    self.log_message("Asterisk: Running in WSL2")
-                else:
-                    # Try checking systemctl status
-                    result3 = subprocess.run(
-                        ["wsl", "systemctl", "is-active", "asterisk"],
-                        capture_output=True,
-                        text=True,
-                        timeout=3
-                    )
-                    if "active" in result3.stdout:
-                        self.asterisk_status.config(foreground="green")
-                        self.asterisk_label.config(text="Running")
-                        self.log_message("Asterisk: Running in WSL2 (systemctl)")
-                    else:
-                        self.asterisk_status.config(foreground="red")
-                        self.asterisk_label.config(text="Not running")
-                        self.log_message(f"Asterisk: Not running - {result3.stdout.strip()}")
-        except Exception as e:
+                self.asterisk_status.config(foreground="red")
+                self.asterisk_label.config(text="Not running")
+        except:
             self.asterisk_status.config(foreground="red")
             self.asterisk_label.config(text="Not running")
-            self.log_message(f"Asterisk check error: {e}")
         
-        # Check webhook server
-        webhook_running = False
+        # Check webhook server (less verbose)
         try:
-            # First check if process is running
             if self.webhook_process and self.webhook_process.poll() is None:
-                self.log_message("Webhook process is running, checking HTTP...")
-                # Process is running, now check if it's responding
                 try:
-                    response = requests.get("http://localhost:5000/status", timeout=3)
+                    response = requests.get("http://localhost:5000/status", timeout=1)
                     if response.status_code == 200:
                         self.webhook_status.config(foreground="green")
                         self.webhook_label.config(text="Running on port 5000")
-                        webhook_running = True
-                        self.log_message("Webhook: Responding on port 5000")
                     else:
                         self.webhook_status.config(foreground="orange")
                         self.webhook_label.config(text="Starting...")
-                        self.log_message(f"Webhook: HTTP status {response.status_code}")
-                except requests.exceptions.ConnectionError as e:
-                    # Process running but not responding yet
+                except:
                     self.webhook_status.config(foreground="orange")
                     self.webhook_label.config(text="Starting...")
-                    self.log_message(f"Webhook: Connection error - {str(e)[:100]}")
-                except requests.exceptions.Timeout:
-                    self.webhook_status.config(foreground="orange")
-                    self.webhook_label.config(text="Starting...")
-                    self.log_message("Webhook: Timeout waiting for response")
-                except Exception as e:
-                    self.webhook_status.config(foreground="orange")
-                    self.webhook_label.config(text="Starting...")
-                    self.log_message(f"Webhook: Error - {str(e)[:100]}")
             else:
                 self.webhook_status.config(foreground="red")
                 self.webhook_label.config(text="Not running")
-                self.log_message("Webhook: Process not running")
-        except Exception as e:
+        except:
             self.webhook_status.config(foreground="red")
             self.webhook_label.config(text="Not running")
-            self.log_message(f"Webhook check error: {e}")
         
-        # Check ngrok
-        ngrok_running = False
+        # Check ngrok (less verbose)
         try:
-            # First check if process is running
             if self.ngrok_process and self.ngrok_process.poll() is None:
-                self.log_message("Ngrok process is running, checking API...")
-                # Process is running, now check API
                 try:
-                    response = requests.get("http://localhost:4040/api/tunnels", timeout=3)
+                    response = requests.get("http://localhost:4040/api/tunnels", timeout=1)
                     data = response.json()
                     if data.get('tunnels'):
                         url = data['tunnels'][0]['public_url']
                         self.ngrok_status.config(foreground="green")
                         self.ngrok_label.config(text=f"Active: {url}")
-                        ngrok_running = True
-                        self.log_message(f"Ngrok: Active - {url}")
                     else:
                         self.ngrok_status.config(foreground="orange")
                         self.ngrok_label.config(text="Starting...")
-                        self.log_message("Ngrok: No tunnels yet")
-                except requests.exceptions.ConnectionError:
-                    # Process running but API not ready yet
+                except:
                     self.ngrok_status.config(foreground="orange")
                     self.ngrok_label.config(text="Starting...")
-                    self.log_message("Ngrok: API not ready yet")
-                except Exception as e:
-                    self.ngrok_status.config(foreground="orange")
-                    self.ngrok_label.config(text="Starting...")
-                    self.log_message(f"Ngrok: Error - {str(e)[:100]}")
             else:
                 self.ngrok_status.config(foreground="gray")
                 self.ngrok_label.config(text="Not running")
-                self.log_message("Ngrok: Process not running")
-        except Exception as e:
+        except:
             self.ngrok_status.config(foreground="gray")
             self.ngrok_label.config(text="Not running")
-            self.log_message(f"Ngrok check error: {e}")
         
-        # Schedule next update
-        self.root.after(5000, self.update_status)
+        # Schedule next update (every 10 seconds instead of 5)
+        self.root.after(10000, self.update_status)
     
     def update_statistics(self):
         """Update statistics display"""
