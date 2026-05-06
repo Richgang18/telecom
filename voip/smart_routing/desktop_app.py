@@ -18,6 +18,14 @@ import configparser
 import requests
 from typing import Optional, Dict, List
 
+# Import softphone
+try:
+    from softphone import launch_softphone
+    SOFTPHONE_AVAILABLE = True
+except ImportError:
+    SOFTPHONE_AVAILABLE = False
+    print("Warning: Softphone module not available")
+
 # Get the directory where this script is located
 APP_DIR = Path(__file__).parent.resolve()
 CONFIG_FILE = APP_DIR / "config.ini"
@@ -52,6 +60,7 @@ class DialerApp:
         self.call_results: List[CallResult] = []
         self.contacts_data: List[Dict] = []
         self.config = configparser.ConfigParser()
+        self.softphone_windows = {}  # Track open softphone windows
         
         # Load configuration
         self.load_config()
@@ -128,6 +137,7 @@ class DialerApp:
         
         # Create tabs
         self.create_dashboard_tab()
+        self.create_softphone_tab()  # NEW: Integrated softphone
         self.create_contacts_tab()
         self.create_results_tab()
         self.create_settings_tab()
@@ -213,6 +223,104 @@ class DialerApp:
         self.activity_log.config(state='disabled')
         
         self.log_message("Application started")
+        
+    def create_softphone_tab(self):
+        """Create the integrated softphone tab"""
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text="📞 Softphone")
+        
+        # Header
+        header_frame = ttk.LabelFrame(tab, text="Integrated Softphone", padding=10)
+        header_frame.pack(fill='x', padx=10, pady=5)
+        
+        ttk.Label(header_frame, text="Built-in SIP softphone - No Linphone needed!", 
+                 font=("Arial", 12, "bold")).pack(anchor='w', pady=5)
+        ttk.Label(header_frame, text="Launch softphone windows to receive calls directly in this application.",
+                 font=("Arial", 10)).pack(anchor='w')
+        
+        # Agent softphones
+        agents_frame = ttk.LabelFrame(tab, text="Agent Softphones", padding=10)
+        agents_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        
+        # Agent 1
+        agent1_frame = ttk.Frame(agents_frame)
+        agent1_frame.pack(fill='x', pady=10)
+        
+        agent1_info = ttk.Frame(agent1_frame)
+        agent1_info.pack(side='left', fill='x', expand=True)
+        
+        ttk.Label(agent1_info, text="Agent 1 - Extension 101", 
+                 font=("Arial", 12, "bold")).pack(anchor='w')
+        ttk.Label(agent1_info, text="Domain: 172.25.17.93 | Port: 5060 (TCP)",
+                 font=("Arial", 9), foreground="gray").pack(anchor='w')
+        
+        self.agent1_status = ttk.Label(agent1_info, text="● Not Running", 
+                                       font=("Arial", 10), foreground="red")
+        self.agent1_status.pack(anchor='w', pady=5)
+        
+        agent1_btn_frame = ttk.Frame(agent1_frame)
+        agent1_btn_frame.pack(side='right')
+        
+        self.agent1_launch_btn = ttk.Button(agent1_btn_frame, text="🚀 Launch Softphone",
+                                           command=lambda: self.launch_softphone(101),
+                                           width=20)
+        self.agent1_launch_btn.pack(side='left', padx=5)
+        
+        ttk.Separator(agents_frame, orient='horizontal').pack(fill='x', pady=10)
+        
+        # Agent 2
+        agent2_frame = ttk.Frame(agents_frame)
+        agent2_frame.pack(fill='x', pady=10)
+        
+        agent2_info = ttk.Frame(agent2_frame)
+        agent2_info.pack(side='left', fill='x', expand=True)
+        
+        ttk.Label(agent2_info, text="Agent 2 - Extension 102", 
+                 font=("Arial", 12, "bold")).pack(anchor='w')
+        ttk.Label(agent2_info, text="Domain: 172.25.17.93 | Port: 5060 (TCP)",
+                 font=("Arial", 9), foreground="gray").pack(anchor='w')
+        
+        self.agent2_status = ttk.Label(agent2_info, text="● Not Running", 
+                                       font=("Arial", 10), foreground="red")
+        self.agent2_status.pack(anchor='w', pady=5)
+        
+        agent2_btn_frame = ttk.Frame(agent2_frame)
+        agent2_btn_frame.pack(side='right')
+        
+        self.agent2_launch_btn = ttk.Button(agent2_btn_frame, text="🚀 Launch Softphone",
+                                           command=lambda: self.launch_softphone(102),
+                                           width=20)
+        self.agent2_launch_btn.pack(side='left', padx=5)
+        
+        # Instructions
+        instructions_frame = ttk.LabelFrame(tab, text="How It Works", padding=10)
+        instructions_frame.pack(fill='x', padx=10, pady=5)
+        
+        instructions = """
+1. Click "Launch Softphone" to open a softphone window for each agent
+2. The softphone will automatically register with Asterisk
+3. When a call comes in, the softphone window will show the caller
+4. Click "Answer" to accept the call
+5. Click "Hangup" to end the call
+
+✓ No Linphone installation needed
+✓ Calls received directly in this application
+✓ Simple and easy to use
+✓ Works on the same machine as Asterisk
+        """
+        
+        ttk.Label(instructions_frame, text=instructions, justify='left',
+                 font=("Arial", 10)).pack(anchor='w')
+        
+        # Status check
+        if not SOFTPHONE_AVAILABLE:
+            warning_frame = ttk.Frame(tab, relief='solid', borderwidth=2)
+            warning_frame.pack(fill='x', padx=10, pady=5)
+            
+            ttk.Label(warning_frame, text="⚠️ Softphone module not available", 
+                     font=("Arial", 11, "bold"), foreground="red").pack(pady=5)
+            ttk.Label(warning_frame, text="Install required package: pip install pyaudio",
+                     font=("Arial", 10)).pack(pady=5)
         
     def create_stat_card(self, parent, label, value, row, col, color="blue"):
         """Create a statistics card"""
@@ -1200,6 +1308,67 @@ class DialerApp:
         self.activity_log.insert(tk.END, f"[{timestamp}] {message}\n")
         self.activity_log.see(tk.END)
         self.activity_log.config(state='disabled')
+    
+    def launch_softphone(self, extension: int):
+        """Launch softphone window for an agent"""
+        if not SOFTPHONE_AVAILABLE:
+            messagebox.showerror("Error", 
+                "Softphone module not available.\n\n"
+                "Install required package:\n"
+                "pip install pyaudio")
+            return
+        
+        # Check if already running
+        if extension in self.softphone_windows:
+            messagebox.showinfo("Info", f"Softphone for extension {extension} is already running")
+            return
+        
+        # Get credentials
+        passwords = {
+            101: "ChangeMe101!",
+            102: "ChangeMe102!"
+        }
+        
+        password = passwords.get(extension)
+        if not password:
+            messagebox.showerror("Error", f"Unknown extension: {extension}")
+            return
+        
+        # Launch softphone
+        try:
+            domain = "172.25.17.93"  # WSL2 IP
+            port = 5060
+            
+            softphone = launch_softphone(self.root, str(extension), password, domain, port)
+            self.softphone_windows[extension] = softphone
+            
+            # Update status
+            if extension == 101:
+                self.agent1_status.config(text="● Running", foreground="green")
+                self.agent1_launch_btn.config(state='disabled')
+            elif extension == 102:
+                self.agent2_status.config(text="● Running", foreground="green")
+                self.agent2_launch_btn.config(state='disabled')
+            
+            self.log_message(f"Launched softphone for extension {extension}")
+            
+            # Monitor window close
+            def on_softphone_close():
+                if extension in self.softphone_windows:
+                    del self.softphone_windows[extension]
+                    if extension == 101:
+                        self.agent1_status.config(text="● Not Running", foreground="red")
+                        self.agent1_launch_btn.config(state='normal')
+                    elif extension == 102:
+                        self.agent2_status.config(text="● Not Running", foreground="red")
+                        self.agent2_launch_btn.config(state='normal')
+                    self.log_message(f"Softphone for extension {extension} closed")
+            
+            softphone.window.protocol("WM_DELETE_WINDOW", lambda: [on_softphone_close(), softphone.on_close()])
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to launch softphone:\n{str(e)}")
+            self.log_message(f"Error launching softphone: {str(e)}")
 
 
 def main():
