@@ -834,12 +834,7 @@ class DialerApp:
     def start_services(self):
         """Start webhook server and ngrok"""
         try:
-            # Step 1: Start Asterisk
-            self.log_message("Step 1/3: Starting Asterisk...")
-            asterisk_started = self.start_asterisk()
-            
-            # Step 2: Start webhook server
-            self.log_message("Step 2/3: Starting webhook server...")
+            # Start webhook server
             if not self.webhook_process or self.webhook_process.poll() is not None:
                 webhook_script = APP_DIR / "webhook_server.py"
                 self.webhook_process = subprocess.Popen(
@@ -851,80 +846,33 @@ class DialerApp:
                 )
                 self.log_message("Webhook server started")
             
-            # Step 3: Start ngrok
-            self.log_message("Step 3/3: Starting ngrok...")
+            # Start ngrok - use Downloads folder directly
             if not self.ngrok_process or self.ngrok_process.poll() is not None:
-                ngrok_path = self.find_ngrok()
+                ngrok_path = Path("C:/Users/Admin/Downloads/ngrok.exe")
                 
-                if ngrok_path:
-                    try:
-                        self.ngrok_process = subprocess.Popen(
-                            [ngrok_path, "http", "5000"],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-                        )
-                        self.log_message(f"Ngrok tunnel started (using {ngrok_path})")
-                        
-                        # Wait a bit for ngrok to start
-                        self.root.after(3000, self.detect_ngrok_url)
-                    except Exception as e:
-                        self.log_message(f"Failed to start ngrok: {e}")
-                        messagebox.showwarning("Ngrok Error", 
-                            f"Found ngrok at {ngrok_path} but failed to start it.\n\n"
-                            f"Error: {e}\n\n"
-                            "The webhook server is running on port 5000.\n"
-                            "You can configure port forwarding manually.")
+                if ngrok_path.exists():
+                    self.ngrok_process = subprocess.Popen(
+                        [str(ngrok_path), "http", "5000"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                    )
+                    self.log_message(f"Ngrok started from Downloads folder")
+                    # Wait for ngrok to start and auto-detect URL
+                    self.root.after(3000, self.detect_ngrok_url)
                 else:
-                    self.log_message("Ngrok not found in common locations.")
-                    response = messagebox.askyesno("Ngrok Not Found", 
-                        "Ngrok executable not found.\n\n"
-                        "Found ngrok.exe in Downloads folder?\n"
-                        "Click YES to browse for ngrok.exe\n"
-                        "Click NO to continue without ngrok\n\n"
-                        "Note: Webhook server will still run on port 5000.")
-                    
-                    if response:
-                        # Let user browse for ngrok
-                        from tkinter import filedialog
-                        ngrok_file = filedialog.askopenfilename(
-                            title="Select ngrok.exe",
-                            initialdir=str(Path.home() / "Downloads"),
-                            filetypes=[("Executable files", "*.exe"), ("All files", "*.*")]
-                        )
-                        if ngrok_file:
-                            try:
-                                self.ngrok_process = subprocess.Popen(
-                                    [ngrok_file, "http", "5000"],
-                                    stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE,
-                                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-                                )
-                                self.log_message(f"Ngrok tunnel started (using {ngrok_file})")
-                                self.root.after(3000, self.detect_ngrok_url)
-                            except Exception as e:
-                                self.log_message(f"Failed to start ngrok: {e}")
-                                messagebox.showerror("Error", f"Failed to start ngrok: {e}")
+                    self.log_message("ERROR: ngrok.exe not found in C:/Users/Admin/Downloads/")
+                    messagebox.showerror("Ngrok Not Found",
+                        "ngrok.exe not found in Downloads folder.\n\n"
+                        "Expected location:\n"
+                        "C:/Users/Admin/Downloads/ngrok.exe\n\n"
+                        "Please place ngrok.exe there.")
             
-            # Show status message
-            status_msg = "Services starting...\n\n"
-            if asterisk_started:
-                status_msg += "✓ Asterisk: Started\n"
-            else:
-                status_msg += "⚠ Asterisk: Needs manual start (see Activity Log)\n"
+            messagebox.showinfo("Services Started", 
+                "Webhook server and ngrok started!\n\n"
+                "Wait 5 seconds for status to update.")
             
-            status_msg += "✓ Webhook server: Starting on port 5000\n"
-            
-            if self.ngrok_process and self.ngrok_process.poll() is None:
-                status_msg += "✓ Ngrok tunnel: Starting\n"
-            else:
-                status_msg += "⚠ Ngrok: Not started\n"
-            
-            status_msg += "\nWait 5 seconds, then status will auto-refresh."
-            
-            messagebox.showinfo("Services Starting", status_msg)
-            
-            # Schedule status update after services have time to start
+            # Auto-refresh status after 5 seconds
             self.root.after(5000, self.force_status_update)
             
         except Exception as e:
