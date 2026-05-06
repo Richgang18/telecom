@@ -730,6 +730,37 @@ class DialerApp:
 
     # ========== Service Control ==========
     
+    def find_ngrok(self):
+        """Find ngrok executable in common locations"""
+        import shutil
+        from pathlib import Path
+        
+        # Check if ngrok is in PATH
+        ngrok_path = shutil.which("ngrok")
+        if ngrok_path:
+            return ngrok_path
+        
+        # Check in the same folder as the app (highest priority)
+        local_ngrok = APP_DIR / "ngrok.exe"
+        if local_ngrok.exists():
+            return str(local_ngrok)
+        
+        # Check common Windows locations
+        common_paths = [
+            Path.home() / "Downloads" / "ngrok.exe",
+            Path("C:/ngrok/ngrok.exe"),
+            Path("C:/Program Files/ngrok/ngrok.exe"),
+            Path("C:/Program Files (x86)/ngrok/ngrok.exe"),
+            Path.home() / "AppData" / "Local" / "ngrok" / "ngrok.exe",
+            Path("C:/Users/Admin/Downloads/ngrok.exe"),
+        ]
+        
+        for path in common_paths:
+            if path.exists():
+                return str(path)
+        
+        return None
+    
     def start_services(self):
         """Start webhook server and ngrok"""
         try:
@@ -747,26 +778,62 @@ class DialerApp:
             
             # Start ngrok
             if not self.ngrok_process or self.ngrok_process.poll() is not None:
-                try:
-                    self.ngrok_process = subprocess.Popen(
-                        ["ngrok", "http", "5000"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-                    )
-                    self.log_message("Ngrok tunnel started")
+                ngrok_path = self.find_ngrok()
+                
+                if ngrok_path:
+                    try:
+                        self.ngrok_process = subprocess.Popen(
+                            [ngrok_path, "http", "5000"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                        )
+                        self.log_message(f"Ngrok tunnel started (using {ngrok_path})")
+                        
+                        # Wait a bit for ngrok to start
+                        self.root.after(3000, self.detect_ngrok_url)
+                    except Exception as e:
+                        self.log_message(f"Failed to start ngrok: {e}")
+                        messagebox.showwarning("Ngrok Error", 
+                            f"Found ngrok at {ngrok_path} but failed to start it.\n\n"
+                            f"Error: {e}\n\n"
+                            "The webhook server is running on port 5000.\n"
+                            "You can configure port forwarding manually.")
+                else:
+                    self.log_message("Ngrok not found in common locations.")
+                    response = messagebox.askyesno("Ngrok Not Found", 
+                        "Ngrok executable not found.\n\n"
+                        "Found ngrok.exe in Downloads folder?\n"
+                        "Click YES to browse for ngrok.exe\n"
+                        "Click NO to continue without ngrok\n\n"
+                        "Note: Webhook server will still run on port 5000.")
                     
-                    # Wait a bit for ngrok to start
-                    self.root.after(3000, self.detect_ngrok_url)
-                except FileNotFoundError:
-                    self.log_message("Ngrok not found. Please install ngrok or configure port forwarding.")
-                    messagebox.showwarning("Warning", 
-                        "Ngrok not found. You'll need to:\n"
-                        "1. Install ngrok, OR\n"
-                        "2. Configure port forwarding manually\n\n"
-                        "The webhook server is running on port 5000.")
+                    if response:
+                        # Let user browse for ngrok
+                        from tkinter import filedialog
+                        ngrok_file = filedialog.askopenfilename(
+                            title="Select ngrok.exe",
+                            initialdir=str(Path.home() / "Downloads"),
+                            filetypes=[("Executable files", "*.exe"), ("All files", "*.*")]
+                        )
+                        if ngrok_file:
+                            try:
+                                self.ngrok_process = subprocess.Popen(
+                                    [ngrok_file, "http", "5000"],
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                                )
+                                self.log_message(f"Ngrok tunnel started (using {ngrok_file})")
+                                self.root.after(3000, self.detect_ngrok_url)
+                            except Exception as e:
+                                self.log_message(f"Failed to start ngrok: {e}")
+                                messagebox.showerror("Error", f"Failed to start ngrok: {e}")
             
-            messagebox.showinfo("Success", "Services started successfully!")
+            messagebox.showinfo("Success", 
+                "Webhook server started successfully!\n\n" +
+                ("Ngrok tunnel started." if self.ngrok_process and self.ngrok_process.poll() is None 
+                 else "Ngrok not started - configure port forwarding manually."))
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to start services: {str(e)}")
