@@ -187,6 +187,10 @@ class DialerApp:
                                              command=self.stop_services, width=20)
         self.stop_services_btn.pack(side='left', padx=5)
         
+        self.refresh_status_btn = ttk.Button(btn_frame, text="🔄 Refresh Status",
+                                              command=self.force_status_update, width=20)
+        self.refresh_status_btn.pack(side='left', padx=5)
+        
         # Statistics
         stats_frame = ttk.LabelFrame(tab, text="Campaign Statistics", padding=10)
         stats_frame.pack(fill='both', expand=True, padx=10, pady=5)
@@ -761,10 +765,81 @@ class DialerApp:
         
         return None
     
+    def start_asterisk(self):
+        """Start Asterisk service"""
+        try:
+            # Check if running in WSL2
+            result = subprocess.run(
+                ["uname", "-r"],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            
+            if "microsoft" in result.stdout.lower() or "wsl" in result.stdout.lower():
+                # Running in WSL2
+                self.log_message("Starting Asterisk service...")
+                
+                # Try to start Asterisk
+                # First check if already running
+                check = subprocess.run(
+                    ["systemctl", "is-active", "asterisk"],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if "active" in check.stdout:
+                    self.log_message("Asterisk is already running")
+                    return True
+                
+                # Try to start without sudo first (if user has permissions)
+                start = subprocess.run(
+                    ["systemctl", "start", "asterisk"],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if start.returncode == 0:
+                    self.log_message("Asterisk started successfully")
+                    return True
+                else:
+                    # Need sudo - try with sudo
+                    self.log_message("Starting Asterisk with sudo...")
+                    start_sudo = subprocess.run(
+                        ["sudo", "-n", "systemctl", "start", "asterisk"],
+                        capture_output=True,
+                        text=True
+                    )
+                    
+                    if start_sudo.returncode == 0:
+                        self.log_message("Asterisk started successfully")
+                        return True
+                    else:
+                        # Sudo requires password - show message
+                        self.log_message("Asterisk requires sudo password")
+                        messagebox.showwarning("Asterisk Startup",
+                            "Asterisk needs to be started with sudo.\n\n"
+                            "Please run this command in WSL2:\n"
+                            "sudo systemctl start asterisk\n\n"
+                            "Or configure passwordless sudo for Asterisk.")
+                        return False
+            else:
+                self.log_message("Not running in WSL2 - cannot start Asterisk")
+                return False
+                
+        except Exception as e:
+            self.log_message(f"Error starting Asterisk: {e}")
+            return False
+    
     def start_services(self):
         """Start webhook server and ngrok"""
         try:
-            # Start webhook server
+            # Step 1: Start Asterisk
+            self.log_message("Step 1/3: Starting Asterisk...")
+            asterisk_started = self.start_asterisk()
+            
+            # Step 2: Start webhook server
+            self.log_message("Step 2/3: Starting webhook server...")
             if not self.webhook_process or self.webhook_process.poll() is not None:
                 webhook_script = APP_DIR / "webhook_server.py"
                 self.webhook_process = subprocess.Popen(
@@ -776,7 +851,8 @@ class DialerApp:
                 )
                 self.log_message("Webhook server started")
             
-            # Start ngrok
+            # Step 3: Start ngrok
+            self.log_message("Step 3/3: Starting ngrok...")
             if not self.ngrok_process or self.ngrok_process.poll() is not None:
                 ngrok_path = self.find_ngrok()
                 
@@ -830,10 +906,26 @@ class DialerApp:
                                 self.log_message(f"Failed to start ngrok: {e}")
                                 messagebox.showerror("Error", f"Failed to start ngrok: {e}")
             
-            messagebox.showinfo("Success", 
-                "Webhook server started successfully!\n\n" +
-                ("Ngrok tunnel started." if self.ngrok_process and self.ngrok_process.poll() is None 
-                 else "Ngrok not started - configure port forwarding manually."))
+            # Show status message
+            status_msg = "Services starting...\n\n"
+            if asterisk_started:
+                status_msg += "✓ Asterisk: Started\n"
+            else:
+                status_msg += "⚠ Asterisk: Needs manual start (see Activity Log)\n"
+            
+            status_msg += "✓ Webhook server: Starting on port 5000\n"
+            
+            if self.ngrok_process and self.ngrok_process.poll() is None:
+                status_msg += "✓ Ngrok tunnel: Starting\n"
+            else:
+                status_msg += "⚠ Ngrok: Not started\n"
+            
+            status_msg += "\nWait 5 seconds, then status will auto-refresh."
+            
+            messagebox.showinfo("Services Starting", status_msg)
+            
+            # Schedule status update after services have time to start
+            self.root.after(5000, self.force_status_update)
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to start services: {str(e)}")
@@ -976,6 +1068,11 @@ class DialerApp:
     
     # ========== Status Updates ==========
     
+    def force_status_update(self):
+        """Force an immediate status update"""
+        self.log_message("Refreshing status...")
+        self.update_status()
+    
     def update_status(self):
         """Update system status indicators"""
         # Check Asterisk
@@ -998,29 +1095,51 @@ class DialerApp:
         
         # Check webhook server
         try:
-            response = requests.get("http://localhost:5000/status", timeout=1)
-            if response.status_code == 200:
-                self.webhook_status.config(foreground="green")
-                self.webhook_label.config(text="Running on port 5000")
+            # First check if process is running
+            if self.webhook_process and self.webhook_process.poll() is None:
+                # Process is running, now check if it's responding
+                try:
+                    response = requests.get("http://localhost:5000/status", timeout=2)
+                    if response.status_code == 200:
+                        self.webhook_status.config(foreground="green")
+                        self.webhook_label.config(text="Running on port 5000")
+                    else:
+                        self.webhook_status.config(foreground="orange")
+                        self.webhook_label.config(text="Starting...")
+                except requests.exceptions.RequestException:
+                    # Process running but not responding yet
+                    self.webhook_status.config(foreground="orange")
+                    self.webhook_label.config(text="Starting...")
             else:
                 self.webhook_status.config(foreground="red")
-                self.webhook_label.config(text="Not responding")
-        except:
+                self.webhook_label.config(text="Not running")
+        except Exception as e:
             self.webhook_status.config(foreground="red")
             self.webhook_label.config(text="Not running")
         
         # Check ngrok
         try:
-            response = requests.get("http://localhost:4040/api/tunnels", timeout=1)
-            data = response.json()
-            if data.get('tunnels'):
-                url = data['tunnels'][0]['public_url']
-                self.ngrok_status.config(foreground="green")
-                self.ngrok_label.config(text=f"Active: {url}")
+            # First check if process is running
+            if self.ngrok_process and self.ngrok_process.poll() is None:
+                # Process is running, now check API
+                try:
+                    response = requests.get("http://localhost:4040/api/tunnels", timeout=2)
+                    data = response.json()
+                    if data.get('tunnels'):
+                        url = data['tunnels'][0]['public_url']
+                        self.ngrok_status.config(foreground="green")
+                        self.ngrok_label.config(text=f"Active: {url}")
+                    else:
+                        self.ngrok_status.config(foreground="orange")
+                        self.ngrok_label.config(text="Starting...")
+                except requests.exceptions.RequestException:
+                    # Process running but API not ready yet
+                    self.ngrok_status.config(foreground="orange")
+                    self.ngrok_label.config(text="Starting...")
             else:
-                self.ngrok_status.config(foreground="orange")
-                self.ngrok_label.config(text="No tunnels")
-        except:
+                self.ngrok_status.config(foreground="gray")
+                self.ngrok_label.config(text="Not running")
+        except Exception as e:
             self.ngrok_status.config(foreground="gray")
             self.ngrok_label.config(text="Not running")
         
