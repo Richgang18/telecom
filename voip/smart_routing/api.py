@@ -242,6 +242,9 @@ async def get_config():
         "voicemail": {
             "file": config["voicemail"].get("voicemail_file", "voicemail.mp3"),
         },
+        "system": {
+            "wsl_sudo_password": config["system"].get("wsl_sudo_password", "8898") if config.has_section("system") else "8898",
+        },
     }
 
 
@@ -272,6 +275,13 @@ async def save_config(request: Request):
         d = body["dialer"]
         if d.get("ring_timeout"): config["dialer"]["ring_timeout"] = str(d["ring_timeout"])
         if d.get("batch_delay"): config["dialer"]["batch_delay"] = str(d["batch_delay"])
+
+    if "system" in body:
+        if not config.has_section("system"):
+            config.add_section("system")
+        s = body["system"]
+        if s.get("wsl_sudo_password"):
+            config["system"]["wsl_sudo_password"] = s["wsl_sudo_password"]
 
     with open(CONFIG_PATH, "w") as f:
         config.write(f)

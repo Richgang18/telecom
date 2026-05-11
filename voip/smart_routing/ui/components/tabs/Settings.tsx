@@ -60,6 +60,19 @@ export default function Settings() {
 
   return (
     <div style={{ maxWidth: 700, display: "flex", flexDirection: "column", gap: 16 }}>
+      <Section title="System">
+        <Field
+          label="WSL2 Sudo Password (used to start Asterisk silently)"
+          value={cfg.system?.wsl_sudo_password || ""}
+          onChange={(v) => update("system", "wsl_sudo_password", v)}
+          type="password"
+          placeholder="Your WSL2 user password"
+        />
+        <div style={{ fontSize: 10, color: "#636e72", marginTop: -6 }}>
+          This is stored locally in config.ini and used only to start Asterisk automatically.
+        </div>
+      </Section>
+
       <Section title="Twilio">
         <Field label="Account SID"   value={cfg.twilio.account_sid}    onChange={(v) => update("twilio", "account_sid", v)} />
         <Field label="Auth Token"    value={cfg.twilio.auth_token}     onChange={(v) => update("twilio", "auth_token", v)} type="password" />

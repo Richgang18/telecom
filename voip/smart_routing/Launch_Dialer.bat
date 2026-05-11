@@ -1,81 +1,125 @@
 @echo off
 REM ============================================================================
-REM Smart Outbound Dialer - Unified Launcher v2.0
+REM Smart Outbound Dialer - Launcher v2.1
+REM Works on any Windows machine with WSL2 installed
 REM ============================================================================
 title Smart Dialer - Starting...
 color 0A
 cd /d "%~dp0"
 
+REM Store PIDs for cleanup
+set "PID_FILE=%TEMP%\smartdialer_pids.txt"
+if exist "%PID_FILE%" del "%PID_FILE%"
+
 echo.
 echo  ============================================================
-echo   SMART OUTBOUND DIALER - Starting System
+echo   SMART OUTBOUND DIALER
 echo  ============================================================
 echo.
 
 REM ============================================================================
-REM STEP 0: Create desktop shortcut silently
+REM Create desktop shortcut silently (first run only)
 REM ============================================================================
-set SHORTCUT=%USERPROFILE%\Desktop\Smart Dialer.lnk
+set "SHORTCUT=%USERPROFILE%\Desktop\Smart Dialer.lnk"
 if not exist "%SHORTCUT%" (
     powershell -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0Create_Shortcut.ps1" >nul 2>&1
 )
 
 REM ============================================================================
-REM STEP 1: Start Asterisk in WSL2 silently (auto-enter password 8898)
+REM STEP 1: Start Asterisk silently in WSL2
+REM Uses the WSL sudo password from config, no popup window
 REM ============================================================================
-echo [1/4] Starting Asterisk in WSL2...
+echo  [1/4] Starting Asterisk...
 
-REM Write a helper script that feeds the sudo password
+REM Read sudo password from config (default: 8898)
+set "SUDO_PASS=8898"
+for /f "tokens=2 delims==" %%a in ('findstr /i "wsl_sudo_password" "%~dp0config.ini" 2^>nul') do (
+    set "SUDO_PASS=%%a"
+    set "SUDO_PASS=!SUDO_PASS: =!"
+)
+
+REM Start Asterisk silently - no window, no password prompt
 powershell -ExecutionPolicy Bypass -WindowStyle Hidden -Command ^
-  "Start-Process wsl -ArgumentList '-e','bash','-c','echo 8898 | sudo -S systemctl start asterisk 2>/dev/null; echo DONE' -WindowStyle Hidden -Wait" >nul 2>&1
+  "& { $p = Start-Process -FilePath 'wsl' -ArgumentList '-e','bash','-c','echo %SUDO_PASS% | sudo -S systemctl start asterisk 2>/dev/null' -WindowStyle Hidden -PassThru -Wait; }" >nul 2>&1
 
 timeout /t 2 /nobreak >nul
-echo  [OK] Asterisk started silently
+echo  [OK] Asterisk started
 echo.
 
 REM ============================================================================
-REM STEP 2: Start FastAPI backend
+REM STEP 2: Start FastAPI backend (port 5000)
 REM ============================================================================
-echo [2/4] Starting API backend (port 5000)...
+echo  [2/4] Starting API backend...
 
-REM Check if port 5000 is already in use
-netstat -ano | findstr ":5000 " | findstr "LISTENING" >nul 2>&1
-if not errorlevel 1 (
-    echo  [OK] API already running on port 5000
-) else (
-    REM Install uvicorn + fastapi if needed
-    python -c "import uvicorn" >nul 2>&1
-    if errorlevel 1 (
-        echo  Installing API dependencies...
-        pip install fastapi uvicorn python-multipart --quiet >nul 2>&1
-    )
-    start "SmartDialer-API" /MIN python "%~dp0api.py"
-    timeout /t 3 /nobreak >nul
-    echo  [OK] API backend started
+REM Kill any existing process on port 5000
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":5000 " ^| findstr "LISTENING"') do (
+    taskkill /PID %%a /F >nul 2>&1
 )
+timeout /t 1 /nobreak >nul
+
+REM Start API
+start "SmartDialer-API" /MIN cmd /c "python "%~dp0api.py" 2>&1 >> "%~dp0api.log""
+
+REM Wait for API to be ready (poll up to 15s)
+set /a API_WAIT=0
+:wait_api
+timeout /t 1 /nobreak >nul
+set /a API_WAIT+=1
+curl -s http://localhost:5000/api/status >nul 2>&1
+if not errorlevel 1 goto api_ready
+if %API_WAIT% GEQ 15 (
+    echo  [!] API failed to start. Check api.log for errors.
+    goto api_ready
+)
+goto wait_api
+:api_ready
+
+REM Save API PID
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":5000 " ^| findstr "LISTENING"') do (
+    echo API=%%a >> "%PID_FILE%"
+)
+echo  [OK] API backend ready on port 5000
 echo.
 
 REM ============================================================================
-REM STEP 3: Start Next.js UI
+REM STEP 3: Start Next.js UI (port 3000)
 REM ============================================================================
-echo [3/4] Starting Next.js UI (port 3000)...
+echo  [3/4] Starting UI...
 
-REM Check if port 3000 is already in use
-netstat -ano | findstr ":3000 " | findstr "LISTENING" >nul 2>&1
-if not errorlevel 1 (
-    echo  [OK] UI already running on port 3000
-) else (
-    start "SmartDialer-UI" /MIN cmd /c "cd /d "%~dp0ui" && npm run dev 2>&1"
-    timeout /t 5 /nobreak >nul
-    echo  [OK] Next.js UI started
+REM Kill any existing process on port 3000
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":3000 " ^| findstr "LISTENING"') do (
+    taskkill /PID %%a /F >nul 2>&1
 )
+timeout /t 1 /nobreak >nul
+
+REM Start Next.js
+start "SmartDialer-UI" /MIN cmd /c "cd /d "%~dp0ui" && npm run dev 2>&1 >> "%~dp0ui.log""
+
+REM Wait for Next.js to be ready (poll up to 30s)
+set /a UI_WAIT=0
+:wait_ui
+timeout /t 2 /nobreak >nul
+set /a UI_WAIT+=2
+curl -s http://localhost:3000 >nul 2>&1
+if not errorlevel 1 goto ui_ready
+if %UI_WAIT% GEQ 30 (
+    echo  [!] UI taking longer than expected. Opening browser anyway...
+    goto ui_ready
+)
+goto wait_ui
+:ui_ready
+
+REM Save UI PID
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":3000 " ^| findstr "LISTENING"') do (
+    echo UI=%%a >> "%PID_FILE%"
+)
+echo  [OK] UI ready on port 3000
 echo.
 
 REM ============================================================================
 REM STEP 4: Open browser
 REM ============================================================================
-echo [4/4] Opening browser...
-timeout /t 4 /nobreak >nul
+echo  [4/4] Opening browser...
 start "" "http://localhost:3000"
 echo  [OK] Browser opened
 echo.
@@ -84,36 +128,33 @@ REM ============================================================================
 REM READY
 REM ============================================================================
 echo  ============================================================
-echo   SYSTEM READY
+echo   SYSTEM IS RUNNING
 echo  ============================================================
 echo.
-echo   Dashboard : http://localhost:3000
-echo   API       : http://localhost:5000
+echo   Dashboard  :  http://localhost:3000
+echo   API        :  http://localhost:5000
 echo.
-echo   Next steps:
-echo     1. Click "Start Services" in the UI to start Ngrok
-echo     2. Upload your contact list
-echo     3. Configure your mobile number in Settings
-echo     4. Click "Start Campaign"
+echo   Quick steps:
+echo     1. Go to Settings - enter Twilio credentials + mobile number
+echo     2. Go to Contacts  - upload your CSV file
+echo     3. Click Start Services (for Ngrok)
+echo     4. Click Start Campaign
 echo.
-echo   To stop: close this window (all processes will be tracked)
+echo   Close this window to STOP all services.
 echo  ============================================================
 echo.
 
-REM Track PIDs for cleanup on exit
-set API_PID=
-set UI_PID=
-
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5000 " ^| findstr "LISTENING"') do set API_PID=%%a
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000 " ^| findstr "LISTENING"') do set UI_PID=%%a
-
-echo   API PID : %API_PID%
-echo   UI PID  : %UI_PID%
-echo.
-echo  Press Ctrl+C or close this window to stop all services.
-echo.
-
-REM Keep window open and wait for exit signal
-:wait_loop
+REM ============================================================================
+REM Keep running - cleanup on exit
+REM ============================================================================
+:main_loop
 timeout /t 5 /nobreak >nul
-goto wait_loop
+
+REM Check if UI is still running, restart if crashed
+curl -s http://localhost:3000 >nul 2>&1
+if errorlevel 1 (
+    echo  [!] UI crashed - restarting...
+    start "SmartDialer-UI" /MIN cmd /c "cd /d "%~dp0ui" && npm run dev 2>&1 >> "%~dp0ui.log""
+)
+
+goto main_loop
