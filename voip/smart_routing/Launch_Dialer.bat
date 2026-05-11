@@ -58,59 +58,9 @@ echo [OK] Asterisk started
 echo.
 
 REM ============================================================================
-REM STEP 2: Start Webhook Server
+REM STEP 2: Launch Desktop Application
 REM ============================================================================
-echo [2/5] Starting Webhook Server...
-echo.
-
-REM Check if webhook_server.py exists
-if not exist "webhook_server.py" (
-    echo [ERROR] webhook_server.py not found
-    pause
-    exit /b 1
-)
-
-REM Start webhook server in background
-start "Webhook Server" /MIN python webhook_server.py
-
-REM Wait for webhook server to start
-timeout /t 3 /nobreak >nul
-
-echo [OK] Webhook Server started on port 5000
-echo.
-
-REM ============================================================================
-REM STEP 3: Start Ngrok Tunnel
-REM ============================================================================
-echo [3/5] Starting Ngrok Tunnel...
-echo.
-
-REM Find ngrok
-set NGROK_PATH=
-if exist "C:\Users\Admin\Downloads\ngrok-v3-stable-windows-amd64\ngrok.exe" (
-    set NGROK_PATH=C:\Users\Admin\Downloads\ngrok-v3-stable-windows-amd64\ngrok.exe
-) else if exist "C:\Users\Admin\Downloads\ngrok.exe" (
-    set NGROK_PATH=C:\Users\Admin\Downloads\ngrok.exe
-) else if exist "ngrok.exe" (
-    set NGROK_PATH=ngrok.exe
-)
-
-if "%NGROK_PATH%"=="" (
-    echo [WARNING] Ngrok not found - webhook will only work locally
-    echo Download ngrok from: https://ngrok.com/download
-    echo.
-) else (
-    echo Starting ngrok tunnel...
-    start "Ngrok Tunnel" "%NGROK_PATH%" http 5000
-    timeout /t 3 /nobreak >nul
-    echo [OK] Ngrok tunnel started
-    echo.
-)
-
-REM ============================================================================
-REM STEP 4: Launch Desktop Application
-REM ============================================================================
-echo [4/5] Launching Desktop Application...
+echo [2/3] Launching Desktop Application...
 echo.
 
 REM Check if desktop_app.py exists
@@ -129,36 +79,33 @@ echo [OK] Desktop Application launched
 echo.
 
 REM ============================================================================
-REM STEP 5: System Ready
+REM STEP 3: System Ready
 REM ============================================================================
-echo [5/5] System Ready!
+echo [3/3] System Ready!
 echo.
 echo ============================================================================
 echo                         SYSTEM STATUS
 echo ============================================================================
 echo.
 echo  [OK] WSL2 and Asterisk     : Running
-echo  [OK] Webhook Server        : Running on port 5000
-if not "%NGROK_PATH%"=="" (
-    echo  [OK] Ngrok Tunnel         : Running
-) else (
-    echo  [--] Ngrok Tunnel         : Not configured
-)
 echo  [OK] Desktop Application   : Running
+echo.
+echo  [--] Webhook Server        : Use "Start Services" button in app
+echo  [--] Ngrok Tunnel          : Use "Start Services" button in app
 echo.
 echo ============================================================================
 echo.
-echo  Your system is ready to make calls!
+echo  Your system is ready!
 echo.
 echo  Next steps:
-echo    1. Configure your Twilio credentials in Settings
-echo    2. Upload your contact list
-echo    3. Configure your mobile number (for mobile agent mode)
-echo    4. Start calling!
+echo    1. In the Desktop App, click "Start Services" button
+echo    2. Configure your Twilio credentials in Settings
+echo    3. Configure your mobile number in Settings
+echo    4. Upload your contact list
+echo    5. Start calling!
 echo.
-echo  To stop the system:
-echo    - Close the Desktop Application
-echo    - Close this window
+echo  Note: With mobile agent mode, calls will ring on your mobile phone,
+echo        not on this computer.
 echo.
 echo ============================================================================
 echo.

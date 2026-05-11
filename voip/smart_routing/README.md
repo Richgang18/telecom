@@ -41,11 +41,15 @@ Calls bridge directly to your cellphone - no softphone needed!
 Lead Answers → System Calls Your Mobile → You Answer → Calls Bridged
 ```
 
+**Important:** Calls ring on your **mobile phone**, NOT on your computer!
+
 **Benefits:**
 - ✅ No softphone required
 - ✅ Work from anywhere
 - ✅ VICIdial-style workflow
 - ✅ AMD (Answering Machine Detection)
+
+**See [HOW_CALLS_WORK.md](HOW_CALLS_WORK.md) for details.**
 
 ---
 
