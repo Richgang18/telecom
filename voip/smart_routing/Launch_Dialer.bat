@@ -1,121 +1,119 @@
 @echo off
 REM ============================================================================
-REM Smart Outbound Dialer - Unified Launcher
+REM Smart Outbound Dialer - Unified Launcher v2.0
 REM ============================================================================
-REM This script starts everything you need in the correct order
-REM ============================================================================
-
-title Smart Outbound Dialer - Starting...
+title Smart Dialer - Starting...
 color 0A
-
-echo.
-echo ============================================================================
-echo                    SMART OUTBOUND DIALER
-echo                         Starting System...
-echo ============================================================================
-echo.
-
-REM Change to script directory
 cd /d "%~dp0"
 
-REM ============================================================================
-REM STEP 0: Create Desktop Shortcut (if not exists)
-REM ============================================================================
-set SHORTCUT_PATH=%USERPROFILE%\Desktop\Smart Dialer.lnk
-
-if not exist "%SHORTCUT_PATH%" (
-    echo [0/5] Creating desktop shortcut...
-    powershell -ExecutionPolicy Bypass -File "Create_Shortcut.ps1" >nul 2>&1
-    if exist "%SHORTCUT_PATH%" (
-        echo [OK] Desktop shortcut created
-    )
-    echo.
-)
-
-REM ============================================================================
-REM STEP 1: Start WSL2 and Asterisk
-REM ============================================================================
-echo [1/5] Starting WSL2 and Asterisk...
 echo.
-
-REM Check if WSL2 is available
-wsl --list >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] WSL2 is not installed or not available
-    echo Please install WSL2 first: https://aka.ms/wsl2
-    pause
-    exit /b 1
-)
-
-REM Start Asterisk in WSL2
-echo Starting Asterisk PBX...
-start "Asterisk" wsl -e bash -c "sudo systemctl start asterisk && echo 'Asterisk started successfully' && sudo asterisk -rvvvvv"
-
-REM Wait for Asterisk to start
-timeout /t 3 /nobreak >nul
-
-echo [OK] Asterisk started
+echo  ============================================================
+echo   SMART OUTBOUND DIALER - Starting System
+echo  ============================================================
 echo.
 
 REM ============================================================================
-REM STEP 2: Launch Desktop Application
+REM STEP 0: Create desktop shortcut silently
 REM ============================================================================
-echo [2/3] Launching Desktop Application...
-echo.
-
-REM Check if desktop_app.py exists
-if not exist "desktop_app.py" (
-    echo [ERROR] desktop_app.py not found
-    pause
-    exit /b 1
+set SHORTCUT=%USERPROFILE%\Desktop\Smart Dialer.lnk
+if not exist "%SHORTCUT%" (
+    powershell -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0Create_Shortcut.ps1" >nul 2>&1
 )
 
-REM Launch desktop app
-start "Smart Dialer" python desktop_app.py
+REM ============================================================================
+REM STEP 1: Start Asterisk in WSL2 silently (auto-enter password 8898)
+REM ============================================================================
+echo [1/4] Starting Asterisk in WSL2...
+
+REM Write a helper script that feeds the sudo password
+powershell -ExecutionPolicy Bypass -WindowStyle Hidden -Command ^
+  "Start-Process wsl -ArgumentList '-e','bash','-c','echo 8898 | sudo -S systemctl start asterisk 2>/dev/null; echo DONE' -WindowStyle Hidden -Wait" >nul 2>&1
 
 timeout /t 2 /nobreak >nul
-
-echo [OK] Desktop Application launched
+echo  [OK] Asterisk started silently
 echo.
 
 REM ============================================================================
-REM STEP 3: System Ready
+REM STEP 2: Start FastAPI backend
 REM ============================================================================
-echo [3/3] System Ready!
-echo.
-echo ============================================================================
-echo                         SYSTEM STATUS
-echo ============================================================================
-echo.
-echo  [OK] WSL2 and Asterisk     : Running
-echo  [OK] Desktop Application   : Running
-echo.
-echo  [--] Webhook Server        : Use "Start Services" button in app
-echo  [--] Ngrok Tunnel          : Use "Start Services" button in app
-echo.
-echo ============================================================================
-echo.
-echo  Your system is ready!
-echo.
-echo  Next steps:
-echo    1. In the Desktop App, click "Start Services" button
-echo    2. Configure your Twilio credentials in Settings
-echo    3. Configure your mobile number in Settings
-echo    4. Upload your contact list
-echo    5. Start calling!
-echo.
-echo  Note: With mobile agent mode, calls will ring on your mobile phone,
-echo        not on this computer.
-echo.
-echo ============================================================================
-echo.
-echo Press any key to minimize this window...
-pause >nul
+echo [2/4] Starting API backend (port 5000)...
 
-REM Minimize this window
-powershell -window minimized -command ""
+REM Check if port 5000 is already in use
+netstat -ano | findstr ":5000 " | findstr "LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo  [OK] API already running on port 5000
+) else (
+    REM Install uvicorn + fastapi if needed
+    python -c "import uvicorn" >nul 2>&1
+    if errorlevel 1 (
+        echo  Installing API dependencies...
+        pip install fastapi uvicorn python-multipart --quiet >nul 2>&1
+    )
+    start "SmartDialer-API" /MIN python "%~dp0api.py"
+    timeout /t 3 /nobreak >nul
+    echo  [OK] API backend started
+)
+echo.
 
-REM Keep window open but minimized
-:loop
-timeout /t 60 /nobreak >nul
-goto loop
+REM ============================================================================
+REM STEP 3: Start Next.js UI
+REM ============================================================================
+echo [3/4] Starting Next.js UI (port 3000)...
+
+REM Check if port 3000 is already in use
+netstat -ano | findstr ":3000 " | findstr "LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo  [OK] UI already running on port 3000
+) else (
+    start "SmartDialer-UI" /MIN cmd /c "cd /d "%~dp0ui" && npm run dev 2>&1"
+    timeout /t 5 /nobreak >nul
+    echo  [OK] Next.js UI started
+)
+echo.
+
+REM ============================================================================
+REM STEP 4: Open browser
+REM ============================================================================
+echo [4/4] Opening browser...
+timeout /t 4 /nobreak >nul
+start "" "http://localhost:3000"
+echo  [OK] Browser opened
+echo.
+
+REM ============================================================================
+REM READY
+REM ============================================================================
+echo  ============================================================
+echo   SYSTEM READY
+echo  ============================================================
+echo.
+echo   Dashboard : http://localhost:3000
+echo   API       : http://localhost:5000
+echo.
+echo   Next steps:
+echo     1. Click "Start Services" in the UI to start Ngrok
+echo     2. Upload your contact list
+echo     3. Configure your mobile number in Settings
+echo     4. Click "Start Campaign"
+echo.
+echo   To stop: close this window (all processes will be tracked)
+echo  ============================================================
+echo.
+
+REM Track PIDs for cleanup on exit
+set API_PID=
+set UI_PID=
+
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5000 " ^| findstr "LISTENING"') do set API_PID=%%a
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000 " ^| findstr "LISTENING"') do set UI_PID=%%a
+
+echo   API PID : %API_PID%
+echo   UI PID  : %UI_PID%
+echo.
+echo  Press Ctrl+C or close this window to stop all services.
+echo.
+
+REM Keep window open and wait for exit signal
+:wait_loop
+timeout /t 5 /nobreak >nul
+goto wait_loop
