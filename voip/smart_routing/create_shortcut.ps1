@@ -1,15 +1,15 @@
-# Create Desktop Shortcut
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$LauncherPath = Join-Path $ScriptDir "Launch_Dialer.bat"
-$DesktopPath = [Environment]::GetFolderPath("Desktop")
-$ShortcutPath = Join-Path $DesktopPath "Smart Dialer.lnk"
+# Create Desktop Shortcut for Smart Outbound Dialer
+$ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
+$LaunchFile = Join-Path $ScriptDir "Launch_Dialer.bat"
+$Desktop    = [Environment]::GetFolderPath("Desktop")
+$Shortcut   = Join-Path $Desktop "Smart Dialer.lnk"
 
-$WScriptShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WScriptShell.CreateShortcut($ShortcutPath)
-$Shortcut.TargetPath = $LauncherPath
-$Shortcut.WorkingDirectory = $ScriptDir
-$Shortcut.Description = "Smart Outbound Dialer"
-$Shortcut.IconLocation = "shell32.dll,13"
-$Shortcut.Save()
+$WS = New-Object -ComObject WScript.Shell
+$SC = $WS.CreateShortcut($Shortcut)
+$SC.TargetPath       = $LaunchFile
+$SC.WorkingDirectory = $ScriptDir
+$SC.Description      = "Smart Outbound Dialer - Call Center"
+$SC.IconLocation     = "shell32.dll,13"
+$SC.Save()
 
-Write-Host "Desktop shortcut created!" -ForegroundColor Green
+Write-Host "Desktop shortcut created: $Shortcut" -ForegroundColor Green
