@@ -8,32 +8,33 @@ $ErrorActionPreference = "SilentlyContinue"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PidFile   = "$env:TEMP\smartdialer_pids.txt"
 
-# Tracked process objects
 $script:apiProc = $null
 $script:uiProc  = $null
 
-# ── Helpers ──────────────────────────────────────────────────
 function Log($msg) {
     $t = Get-Date -Format "HH:mm:ss"
     Write-Host "  [$t] $msg" -ForegroundColor Cyan
 }
 
 function Port-Listening($port) {
-    return !!(netstat -ano 2>$null | Select-String ":$port\s" | Select-String "LISTENING")
+    $result = netstat -ano 2>$null | Select-String ":$port " | Select-String "LISTENING"
+    return ($null -ne $result -and $result.Count -gt 0)
 }
 
 function Api-Alive {
     try {
-        $r = Invoke-WebRequest "http://localhost:5000/api/status" -TimeoutSec 2 -UseBasicParsing -EA Stop
-        return $r.StatusCode -eq 200
-    } catch { return $false }
+        $r = Invoke-WebRequest "http://localhost:5000/api/status" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
+        return ($r.StatusCode -eq 200)
+    } catch {
+        return $false
+    }
 }
 
 function Kill-Port($port) {
-    $lines = netstat -ano 2>$null | Select-String ":$port\s" | Select-String "LISTENING"
+    $lines = netstat -ano 2>$null | Select-String ":$port " | Select-String "LISTENING"
     foreach ($l in $lines) {
         if ($l -match '\s+(\d+)$') {
-            Stop-Process -Id ([int]$Matches[1]) -Force -EA SilentlyContinue
+            Stop-Process -Id ([int]$Matches[1]) -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -61,26 +62,28 @@ function Start-UI {
 }
 
 function Stop-All {
-    Write-Host "`n  Stopping all services..." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Stopping all services..." -ForegroundColor Yellow
 
-    # Kill tracked processes
     foreach ($p in @($script:apiProc, $script:uiProc)) {
-        if ($p -and !$p.HasExited) {
-            Stop-Process -Id $p.Id -Force -EA SilentlyContinue
+        if ($null -ne $p -and -not $p.HasExited) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
         }
     }
 
-    # Kill by port (catches any orphans)
-    foreach ($port in @(5000, 3000, 4040)) { Kill-Port $port }
+    foreach ($port in @(5000, 3000, 4040)) {
+        Kill-Port $port
+    }
 
-    # Kill node processes spawned by npm
-    Get-Process -Name "node" -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+    Get-Process -Name "node" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
-    if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
-    Write-Host "  Done. Goodbye." -ForegroundColor Green
+    if (Test-Path $PidFile) {
+        Remove-Item $PidFile -Force
+    }
+
+    Write-Host "  All services stopped." -ForegroundColor Green
 }
 
-# Register cleanup on exit
 Register-EngineEvent PowerShell.Exiting -Action { Stop-All } | Out-Null
 
 # ── Banner ────────────────────────────────────────────────────
@@ -98,39 +101,51 @@ if (-not (Test-Path $shortcut)) {
     & powershell -ExecutionPolicy Bypass -WindowStyle Hidden -File "$ScriptDir\Create_Shortcut.ps1" 2>$null
 }
 
-# ── Read sudo password ────────────────────────────────────────
+# ── Read sudo password from config.ini ───────────────────────
 $sudoPass = "8898"
 if (Test-Path "$ScriptDir\config.ini") {
     $line = Get-Content "$ScriptDir\config.ini" | Where-Object { $_ -match "wsl_sudo_password\s*=" }
-    if ($line) { $sudoPass = ($line -split "=", 2)[1].Trim() }
+    if ($line) {
+        $sudoPass = ($line -split "=", 2)[1].Trim()
+    }
 }
 
-# ── STEP 1: Asterisk ─────────────────────────────────────────
+# ── STEP 1: Start Asterisk silently ──────────────────────────
 Log "Starting Asterisk in WSL2..."
 Start-Process wsl `
     -ArgumentList "-e", "bash", "-c", "echo $sudoPass | sudo -S systemctl start asterisk > /dev/null 2>&1" `
     -WindowStyle Hidden -Wait
-Log "Asterisk OK"
+Log "Asterisk started"
 
-# ── STEP 2: API backend ───────────────────────────────────────
+# ── STEP 2: Start API backend ─────────────────────────────────
 Log "Starting API backend (port 5000)..."
 Start-Api
 
-# Wait up to 20s for API
 $w = 0
-while (-not (Api-Alive) -and $w -lt 20) { Start-Sleep 1; $w++ }
-if (Api-Alive) { Log "API ready on port 5000" }
-else           { Log "API slow to start — continuing anyway" }
+while (-not (Api-Alive) -and $w -lt 20) {
+    Start-Sleep 1
+    $w++
+}
+if (Api-Alive) {
+    Log "API ready on port 5000"
+} else {
+    Log "API slow to start - continuing anyway"
+}
 
-# ── STEP 3: Next.js UI ────────────────────────────────────────
+# ── STEP 3: Start Next.js UI ──────────────────────────────────
 Log "Starting UI (port 3000)..."
 Start-UI
 
-# Wait up to 45s for port 3000
 $w = 0
-while (-not (Port-Listening 3000) -and $w -lt 45) { Start-Sleep 2; $w += 2 }
-if (Port-Listening 3000) { Log "UI ready on port 3000" }
-else                     { Log "UI slow to start — opening browser anyway" }
+while (-not (Port-Listening 3000) -and $w -lt 45) {
+    Start-Sleep 2
+    $w += 2
+}
+if (Port-Listening 3000) {
+    Log "UI ready on port 3000"
+} else {
+    Log "UI slow to start - opening browser anyway"
+}
 
 # ── STEP 4: Open browser ──────────────────────────────────────
 Log "Opening browser in 5 seconds..."
@@ -148,24 +163,20 @@ Write-Host "   CLOSE THIS WINDOW TO STOP EVERYTHING" -ForegroundColor Yellow
 Write-Host "  ============================================================" -ForegroundColor Green
 Write-Host ""
 
-# Save PIDs
 @($script:apiProc.Id, $script:uiProc.Id) | Out-File $PidFile
 
 # ── Watchdog loop ─────────────────────────────────────────────
-# Only restarts a service if its process has actually EXITED
 while ($true) {
     Start-Sleep 15
 
-    # API watchdog — check process exit, not HTTP (avoids false restarts)
-    if ($script:apiProc -and $script:apiProc.HasExited) {
-        Log "API exited (code $($script:apiProc.ExitCode)) — restarting..."
+    if ($null -ne $script:apiProc -and $script:apiProc.HasExited) {
+        Log "API stopped - restarting..."
         Start-Api
         Start-Sleep 3
     }
 
-    # UI watchdog — check process exit
-    if ($script:uiProc -and $script:uiProc.HasExited) {
-        Log "UI exited — restarting..."
+    if ($null -ne $script:uiProc -and $script:uiProc.HasExited) {
+        Log "UI stopped - restarting..."
         Start-UI
         Start-Sleep 3
     }
