@@ -173,23 +173,36 @@ class SmartDialer:
 
         self.logger.info("Dialing %s (%s)...", name, phone)
 
-        call = self.client.calls.create(
-            to=phone,
-            from_=self.from_number,
+        # Get AMD settings from config
+        enable_amd = self.config["agents"].getboolean("enable_amd", True)
+        amd_timeout = int(self.config["agents"].get("amd_timeout", "30"))
+        
+        # Build call parameters
+        call_params = {
+            "to": phone,
+            "from_": self.from_number,
             # When answered → connect to agent
-            url=f"{self.webhook_base}/connect",
+            "url": f"{self.webhook_base}/connect",
             # When not answered → drop voicemail
-            status_callback=f"{self.webhook_base}/no-answer",
-            status_callback_event=["no-answer", "busy", "failed"],
-            status_callback_method="POST",
-            timeout=self.ring_timeout,
-            machine_detection="Enable",
-            machine_detection_timeout=5,
-        )
+            "status_callback": f"{self.webhook_base}/no-answer",
+            "status_callback_event": ["no-answer", "busy", "failed"],
+            "status_callback_method": "POST",
+            "timeout": self.ring_timeout,
+        }
+        
+        # Add AMD if enabled
+        if enable_amd:
+            call_params["machine_detection"] = "DetectMessageEnd"
+            call_params["machine_detection_timeout"] = amd_timeout
+            call_params["async_amd"] = "true"
+            call_params["async_amd_status_callback"] = f"{self.webhook_base}/connect"
+            call_params["async_amd_status_callback_method"] = "POST"
+
+        call = self.client.calls.create(**call_params)
 
         self.logger.info(
-            "Call initiated: SID=%s to=%s name=%s",
-            call.sid, phone, name,
+            "Call initiated: SID=%s to=%s name=%s AMD=%s",
+            call.sid, phone, name, "enabled" if enable_amd else "disabled",
         )
         return call.sid
 

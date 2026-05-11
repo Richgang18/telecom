@@ -76,6 +76,10 @@ def connect() -> Response:
 
     Checks for an available agent and returns TwiML to bridge the call.
     If no agents are available, plays a busy message.
+    
+    Supports two modes:
+    - softphone: Connects to SIP extension (original mode)
+    - mobile: Dials agent's mobile phone (VICIdial-style)
     """
     call_sid = request.form.get("CallSid", "unknown")
     to_number = request.form.get("To", "unknown")
@@ -92,6 +96,68 @@ def connect() -> Response:
         twiml = generate_no_answer_twiml(config)
         return Response(twiml, mimetype="text/xml")
 
+    # Check agent mode
+    agent_mode = config["agents"].get("agent_mode", "softphone")
+    
+    if agent_mode == "mobile":
+        # Mobile agent mode - dial agent's cellphone
+        return connect_mobile_agent(call_sid, to_number)
+    else:
+        # Softphone mode - connect to SIP extension
+        return connect_softphone_agent(call_sid, to_number)
+
+
+def connect_mobile_agent(call_sid: str, to_number: str) -> Response:
+    """
+    Connect call to agent's mobile phone (VICIdial-style).
+    
+    Flow:
+    1. Find available agent
+    2. Dial agent's mobile number
+    3. Agent answers and presses 1 to confirm
+    4. Bridge both calls together
+    """
+    # Find available agent
+    agent_index = router.get_available_agent_index()
+    if agent_index is None:
+        logger.warning("No agents available for call %s", call_sid)
+        twiml = router.generate_busy_twiml()
+        return Response(twiml, mimetype="text/xml")
+    
+    # Get agent mobile number
+    mobile_numbers = config["agents"].get("agent_mobile_numbers", "").split(",")
+    if agent_index >= len(mobile_numbers):
+        logger.error("Agent index %d out of range for mobile numbers", agent_index)
+        twiml = router.generate_busy_twiml()
+        return Response(twiml, mimetype="text/xml")
+    
+    mobile_number = mobile_numbers[agent_index].strip()
+    agent_timeout = int(config["agents"].get("agent_timeout", "20"))
+    
+    # Mark agent busy
+    router.mark_busy_by_index(agent_index, call_sid)
+    
+    # Generate TwiML to dial mobile
+    webhook_base = config["twilio"]["webhook_base_url"].rstrip("/")
+    
+    twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Connecting you to an agent. Please wait.</Say>
+    <Dial timeout="{agent_timeout}" action="{webhook_base}/agent-complete?agent={agent_index}">
+        <Number>{mobile_number}</Number>
+    </Dial>
+    <Say voice="alice">The agent is not available. Leaving a voicemail.</Say>
+    <Play>{webhook_base}/voicemail-audio</Play>
+</Response>'''
+    
+    logger.info("Connecting call %s to mobile agent %d (%s)", call_sid, agent_index, mobile_number)
+    return Response(twiml, mimetype="text/xml")
+
+
+def connect_softphone_agent(call_sid: str, to_number: str) -> Response:
+    """
+    Connect call to SIP softphone extension (original mode).
+    """
     # Find available agent
     ext = router.get_available_agent()
     if ext is None:
@@ -134,18 +200,31 @@ def agent_complete() -> Response:
     Called by Twilio when the agent hangs up (Dial action URL).
 
     Marks the agent as available for the next call.
+    Supports both softphone (ext) and mobile (agent index) modes.
     """
     ext = request.args.get("ext", "")
+    agent_index_str = request.args.get("agent", "")
     call_sid = request.form.get("CallSid", "unknown")
     dial_status = request.form.get("DialCallStatus", "unknown")
 
     logger.info(
-        "Agent %s completed call %s (status=%s)",
-        ext, call_sid, dial_status,
+        "Agent completed call %s (status=%s)",
+        call_sid, dial_status,
     )
 
-    if ext:
+    # Handle mobile agent mode
+    if agent_index_str:
+        try:
+            agent_index = int(agent_index_str)
+            router.mark_available_by_index(agent_index)
+            logger.info("Mobile agent %d marked available", agent_index)
+        except ValueError:
+            logger.error("Invalid agent index: %s", agent_index_str)
+    
+    # Handle softphone mode
+    elif ext:
         router.mark_available(ext)
+        logger.info("Softphone agent %s marked available", ext)
 
     # Return empty TwiML to end the call
     return Response(

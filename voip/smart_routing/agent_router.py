@@ -43,23 +43,41 @@ class AgentRouter:
 
     def __init__(self, config: configparser.ConfigParser) -> None:
         cfg = config["agents"]
-        extensions = [e.strip() for e in cfg["agent_extensions"].split(",")]
-        names = [n.strip() for n in cfg["agent_names"].split(",")]
+        
+        # Get agent mode
+        self.agent_mode = cfg.get("agent_mode", "softphone")
+        
+        # Load agent configuration based on mode
+        if self.agent_mode == "mobile":
+            # Mobile agent mode
+            mobile_numbers = [n.strip() for n in cfg.get("agent_mobile_numbers", "").split(",")]
+            names = [n.strip() for n in cfg.get("agent_names", "Agent 1,Agent 2").split(",")]
+            
+            # Create agents with index-based keys
+            self._agents: dict[str, dict] = {
+                str(i): {"name": name, "mobile": mobile, "status": "available", "call_sid": None}
+                for i, (name, mobile) in enumerate(zip(names, mobile_numbers))
+            }
+        else:
+            # Softphone mode (original)
+            extensions = [e.strip() for e in cfg["agent_extensions"].split(",")]
+            names = [n.strip() for n in cfg["agent_names"].split(",")]
+            
+            self._agents: dict[str, dict] = {
+                ext: {"name": name, "status": "available", "call_sid": None}
+                for ext, name in zip(extensions, names)
+            }
+        
         self.agent_timeout = int(cfg.get("agent_timeout", "20"))
         self.max_concurrent = int(cfg.get("max_concurrent_calls", "2"))
 
         self._lock = threading.Lock()
         self._availability_event = threading.Event()  # Signal when agent becomes available
-        
-        # {extension: {"name": str, "status": "available"|"busy", "call_sid": str|None}}
-        self._agents: dict[str, dict] = {
-            ext: {"name": name, "status": "available", "call_sid": None}
-            for ext, name in zip(extensions, names)
-        }
 
         self.logger = logging.getLogger(__name__)
         self.logger.info(
-            "AgentRouter initialised with %d agents: %s",
+            "AgentRouter initialised in %s mode with %d agents: %s",
+            self.agent_mode,
             len(self._agents),
             list(self._agents.keys()),
         )
@@ -85,6 +103,20 @@ class AgentRouter:
                 if info["status"] == "available":
                     return ext
         return None
+    
+    def get_available_agent_index(self) -> int | None:
+        """
+        Return the index of the next available agent (for mobile mode), or None if all busy.
+        Does NOT mark the agent as busy — call mark_busy_by_index() after routing.
+        """
+        with self._lock:
+            for key, info in self._agents.items():
+                if info["status"] == "available":
+                    try:
+                        return int(key)
+                    except ValueError:
+                        continue
+        return None
 
     def mark_busy(self, extension: str, call_sid: str) -> None:
         """Mark an agent as busy with the given call SID."""
@@ -97,6 +129,19 @@ class AgentRouter:
                 # Check if all agents are now busy
                 if self.available_count() == 0:
                     self.logger.warning("⚠️  All agents busy - dialing will pause until one becomes available")
+    
+    def mark_busy_by_index(self, agent_index: int, call_sid: str) -> None:
+        """Mark a mobile agent as busy with the given call SID (by index)."""
+        with self._lock:
+            key = str(agent_index)
+            if key in self._agents:
+                self._agents[key]["status"] = "busy"
+                self._agents[key]["call_sid"] = call_sid
+                self.logger.info("Mobile agent %d marked busy (call %s)", agent_index, call_sid)
+                
+                # Check if all agents are now busy
+                if self.available_count() == 0:
+                    self.logger.warning("⚠️  All agents busy - dialing will pause until one becomes available")
 
     def mark_available(self, extension: str) -> None:
         """Mark an agent as available (call ended)."""
@@ -105,6 +150,18 @@ class AgentRouter:
                 self._agents[extension]["status"] = "available"
                 self._agents[extension]["call_sid"] = None
                 self.logger.info("✅ Agent %s marked available - resuming dialing", extension)
+                
+                # Signal that an agent is now available
+                self._availability_event.set()
+    
+    def mark_available_by_index(self, agent_index: int) -> None:
+        """Mark a mobile agent as available (call ended) by index."""
+        with self._lock:
+            key = str(agent_index)
+            if key in self._agents:
+                self._agents[key]["status"] = "available"
+                self._agents[key]["call_sid"] = None
+                self.logger.info("✅ Mobile agent %d marked available - resuming dialing", agent_index)
                 
                 # Signal that an agent is now available
                 self._availability_event.set()

@@ -1,176 +1,160 @@
-# Smart Outbound Routing System
+# 📞 Smart Outbound Dialer
 
-Automated outbound calling with live agent connection and voicemail drop.
+Professional VoIP call center system with mobile agent support.
 
-## How It Works
+## 🚀 Quick Start
 
+### 1. Run the Launcher
 ```
-Contact list (CSV)
-       ↓
-   Dialer checks available agents (max 2 at a time)
-       ↓
-   Twilio dials contact
-       ↓
-   ┌─────────────────────────────────────┐
-   │ Answered by human?                  │
-   │   YES → /connect → bridge to agent  │
-   │   NO  → /no-answer → voicemail drop │
-   └─────────────────────────────────────┘
-       ↓
-   Agent completes call → marked available → next contact dialed
+Launch_Dialer.bat
 ```
 
-- **2 simultaneous calls** — one per agent, never more than available agents
-- **Live agent connection** — answered calls bridge instantly to extension 101 or 102
-- **Voicemail drop** — unanswered calls play your pre-recorded message
-- **Answering machine detection** — Twilio detects machines and drops voicemail automatically
+This automatically starts everything:
+- WSL2 + Asterisk
+- Webhook Server
+- Ngrok Tunnel
+- Desktop Application
 
----
+### 2. Configure Mobile Number
 
-## Setup
-
-### 1. Install dependencies
-
-```bash
-cd voip/smart_routing
-pip3 install -r requirements.txt
-```
-
-### 2. Fill in config.ini
-
-Open `config.ini` and fill in all values:
-
-```ini
-[twilio]
-account_sid = ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx   # from twilio.com/console
-auth_token  = your_auth_token                      # from twilio.com/console
-from_number = +14145551000                         # your Twilio number
-webhook_base_url = https://pbx.vouchersdept.com    # your public URL
-
-[calley]
-api_key = your_calley_api_key
-team_id = your_calley_team_id
-
-[agents]
-max_concurrent_calls = 2
-agent_extensions = 101,102
-agent_names = Agent 1,Agent 2
-```
-
-### 3. Add your voicemail recording
-
-Record a short voicemail message (MP3 or WAV) and save it as:
-```
-voip/smart_routing/voicemail.mp3
-```
-
-Keep it under 30 seconds. Example script:
-> "Hi, this is [Your Name] from [Company]. I'm reaching out about [reason].
-> Please call me back at [number]. Thank you!"
-
-### 4. Add your contacts
-
-Edit `contacts.csv`:
-```csv
-name,phone_number
-John Smith,+14145551001
-Jane Doe,+14145551002
-```
-
-All numbers must be in E.164 format (+1XXXXXXXXXX for US numbers).
-
-### 5. Make sure agents are logged into Linphone
-
-Both agents (extensions 101 and 102) must be registered on Linphone
-before starting the dialer. Check status:
-```bash
-asterisk -rx "pjsip show registrations"
-```
-
-### 6. Start the webhook server
-
-```bash
-python3 webhook_server.py
-```
-
-The server runs on port 5000. Twilio must be able to reach it at the
-`webhook_base_url` configured in config.ini.
-
-### 7. Run the dialer
-
-```bash
-# Dial all contacts
-python3 dialer.py
-
-# Preview without making real calls
-python3 dialer.py --dry-run
-
-# Dial first 10 contacts only
-python3 dialer.py --limit 10
-```
-
----
-
-## Monitoring
-
-### Check agent availability (live)
-```
-GET http://localhost:5000/status
-```
-Returns JSON with agent status and available count.
-
-### View call logs
-```bash
-tail -f smart_routing.log
-```
-
-### Check active calls in Asterisk
-```bash
-asterisk -rx "core show channels"
-```
-
----
-
-## File Structure
-
-```
-smart_routing/
-├── config.ini          ← All credentials and settings go here
-├── dialer.py           ← Outbound dialer (run this to start calling)
-├── webhook_server.py   ← Flask server handling Twilio webhooks
-├── agent_router.py     ← Agent availability tracking and TwiML generation
-├── voicemail_drop.py   ← Voicemail drop TwiML generation
-├── contacts.csv        ← Contact list (name, phone_number)
-├── voicemail.mp3       ← Your pre-recorded voicemail (add this file)
-├── requirements.txt    ← Python dependencies
-└── smart_routing.log   ← Call logs (auto-created)
-```
-
----
-
-## Twilio Console Setup
-
-1. Log into twilio.com/console
-2. Go to **Phone Numbers → Manage → Active Numbers**
-3. Click your number
-4. Under **Voice Configuration**, set:
-   - **A call comes in**: Webhook → `https://pbx.vouchersdept.com/connect`
-   - **Call status changes**: `https://pbx.vouchersdept.com/no-answer`
+In the Desktop App:
+1. Go to **Settings** tab
+2. Enter your mobile number: `+14145551234`
+3. Set agent mode: `mobile`
+4. Enable AMD
 5. Save
 
+### 3. Start Calling
+
+1. Upload contacts (CSV)
+2. Click "Start Calling"
+3. Answer your phone when it rings!
+
 ---
 
-## Troubleshooting
+## 📱 Mobile Agent Mode
 
-**Calls not connecting to agents**
-- Check agents are registered: `asterisk -rx "pjsip show registrations"`
-- Check webhook server is running: `curl http://localhost:5000/status`
-- Check Twilio webhook URL is correct in config.ini
+Calls bridge directly to your cellphone - no softphone needed!
 
-**Voicemail not playing**
-- Confirm `voicemail.mp3` exists in the smart_routing folder
-- Check the file is accessible: `curl https://pbx.vouchersdept.com/voicemail-audio`
+**How it works:**
+```
+Lead Answers → System Calls Your Mobile → You Answer → Calls Bridged
+```
 
-**All agents showing busy**
-- Check `smart_routing.log` for agent-complete events
-- Restart webhook_server.py to reset agent state
+**Benefits:**
+- ✅ No softphone required
+- ✅ Work from anywhere
+- ✅ VICIdial-style workflow
+- ✅ AMD (Answering Machine Detection)
+
+---
+
+## 📁 Files
+
+### Essential Files
+- `Launch_Dialer.bat` - Start everything
+- `config.ini` - Configuration
+- `contacts.csv` - Contact list
+- `voicemail.mp3` - Voicemail audio
+
+### Python Scripts
+- `desktop_app.py` - Main GUI
+- `webhook_server.py` - Twilio webhooks
+- `dialer.py` - Outbound dialer
+- `agent_router.py` - Agent routing
+- `voicemail_drop.py` - Voicemail handler
+
+### Documentation
+- `GETTING_STARTED.md` - Quick start guide
+- `MOBILE_AGENT_GUIDE.md` - Mobile agent details
+- `QUICK_REFERENCE.md` - Command reference
+- `COMPLETE_SYSTEM_GUIDE.md` - Full documentation
+- `SYSTEM_ARCHITECTURE.md` - Technical details
+- `IMPLEMENTATION_COMPLETE.md` - What's been implemented
+
+---
+
+## ⚙️ Configuration
+
+**config.ini:**
+```ini
+[twilio]
+account_sid = ACxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+auth_token = your_auth_token
+from_number = +17868339866
+webhook_base_url = https://your-ngrok-url.ngrok-free.dev
+
+[agents]
+agent_mode = mobile
+agent_mobile_numbers = +14145551234
+agent_timeout = 20
+enable_amd = true
+```
+
+---
+
+## 📋 Contact List Format
+
+**CSV Format:**
+```csv
+Firstname,Lastname,Dob,Phone,Address1,Address2,City,Zip
+John,Smith,1980-01-15,+14145551001,123 Main St,,Milwaukee,53202
+```
+
+**Required:** Phone (E.164 format: +1XXXXXXXXXX)
+
+---
+
+## 🔧 Troubleshooting
+
+### Phone doesn't ring
+- Check mobile number format: `+1XXXXXXXXXX`
+- Check AMD settings
+- Check Twilio console
+
+### Services won't start
+```bash
+# Check Asterisk
+wsl sudo systemctl status asterisk
+
+# Check ports
+netstat -ano | findstr :5000
+```
+
+### No audio
+- Check mobile signal
+- Enable WiFi calling
+- Check Twilio trunk
+
+---
+
+## 📚 Documentation
+
+- **Quick Start:** [GETTING_STARTED.md](GETTING_STARTED.md)
+- **Mobile Agent:** [MOBILE_AGENT_GUIDE.md](MOBILE_AGENT_GUIDE.md)
+- **Commands:** [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
+- **Complete Guide:** [COMPLETE_SYSTEM_GUIDE.md](COMPLETE_SYSTEM_GUIDE.md)
+
+---
+
+## 💰 Cost
+
+**Mobile mode:** ~$0.026/min (2x softphone)
+- Twilio → Lead: $0.013/min
+- Twilio → Mobile: $0.013/min
+
+---
+
+## ✅ Features
+
+- ✅ Mobile agent bridging (VICIdial-style)
+- ✅ Answering machine detection
+- ✅ Automatic voicemail drop
+- ✅ Call tracking & reporting
+- ✅ Agent routing
+- ✅ One-click launcher
+- ✅ Desktop GUI
+
+---
+
+**Ready to start?** Run `Launch_Dialer.bat` and start calling! 🚀
