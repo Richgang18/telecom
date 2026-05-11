@@ -101,6 +101,11 @@ body {
   50% { opacity: 0.4; }
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 .slide-in { animation: slideIn 0.2s ease; }
 @keyframes slideIn {
   from { opacity: 0; transform: translateY(-4px); }

@@ -1,7 +1,6 @@
 """
 api.py — FastAPI backend for the Smart Outbound Dialer
-Replaces Flask webhook_server.py with a full REST + WebSocket API
-that the Next.js UI consumes.
+REST + WebSocket API consumed by the Next.js UI.
 """
 from __future__ import annotations
 
@@ -12,10 +11,9 @@ import logging
 import mimetypes
 import subprocess
 import threading
-import time
+import urllib.request
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -31,10 +29,12 @@ from voicemail_drop import generate_no_answer_twiml
 BASE_DIR = Path(__file__).parent
 CONFIG_PATH = BASE_DIR / "config.ini"
 
+
 def load_config() -> configparser.ConfigParser:
     cfg = configparser.ConfigParser()
     cfg.read(CONFIG_PATH)
     return cfg
+
 
 config = load_config()
 
@@ -61,7 +61,7 @@ app.add_middleware(
 router = AgentRouter(config)
 
 # ---------------------------------------------------------------------------
-# WebSocket connection manager — pushes live events to the UI
+# WebSocket manager
 # ---------------------------------------------------------------------------
 class ConnectionManager:
     def __init__(self):
@@ -72,7 +72,8 @@ class ConnectionManager:
         self.active.append(ws)
 
     def disconnect(self, ws: WebSocket):
-        self.active.remove(ws)
+        if ws in self.active:
+            self.active.remove(ws)
 
     async def broadcast(self, data: dict):
         dead = []
@@ -82,28 +83,33 @@ class ConnectionManager:
             except Exception:
                 dead.append(ws)
         for ws in dead:
-            self.active.remove(ws)
+            self.disconnect(ws)
+
 
 manager = ConnectionManager()
-
-# In-memory call log (last 500 entries)
 call_log: list[dict] = []
 dialer_process: subprocess.Popen | None = None
 ngrok_process: subprocess.Popen | None = None
-webhook_process: subprocess.Popen | None = None
 
-# ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
-def _push(event: str, data: dict):
-    """Fire-and-forget broadcast from sync context."""
-    payload = {"event": event, "ts": datetime.utcnow().isoformat(), **data}
-    asyncio.run_coroutine_threadsafe(manager.broadcast(payload), asyncio.get_event_loop())
 
 def _reload_config():
     global config, router
     config = load_config()
     router = AgentRouter(config)
+
+
+def _get_ngrok_url() -> str:
+    """Return current ngrok tunnel URL or empty string."""
+    try:
+        with urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2) as r:
+            data = json.loads(r.read())
+        tunnels = data.get("tunnels", [])
+        if tunnels:
+            return tunnels[0]["public_url"]
+    except Exception:
+        pass
+    return ""
+
 
 # ---------------------------------------------------------------------------
 # Twilio Webhook endpoints
@@ -119,8 +125,7 @@ async def connect_call(request: Request):
     if answered_by in ("machine_start", "fax"):
         logger.info("AMD: machine detected — dropping voicemail")
         await manager.broadcast({"event": "amd_machine", "call_sid": call_sid, "ts": datetime.utcnow().isoformat()})
-        twiml = generate_no_answer_twiml(config)
-        return Response(content=twiml, media_type="text/xml")
+        return Response(content=generate_no_answer_twiml(config), media_type="text/xml")
 
     agent_mode = config["agents"].get("agent_mode", "softphone")
 
@@ -137,14 +142,11 @@ async def connect_call(request: Request):
         webhook_base = config["twilio"]["webhook_base_url"].rstrip("/")
 
         twiml = (
-            f'<?xml version="1.0" encoding="UTF-8"?>'
-            f'<Response>'
+            f'<?xml version="1.0" encoding="UTF-8"?><Response>'
             f'<Say voice="alice">Please hold while we connect you.</Say>'
             f'<Dial timeout="{timeout}" action="{webhook_base}/agent-complete?agent={agent_index}">'
-            f'<Number>{mobile}</Number>'
-            f'</Dial>'
-            f'<Play>{webhook_base}/voicemail-audio</Play>'
-            f'</Response>'
+            f'<Number>{mobile}</Number></Dial>'
+            f'<Play>{webhook_base}/voicemail-audio</Play></Response>'
         )
         await manager.broadcast({"event": "call_connected", "call_sid": call_sid, "agent": agent_index, "mobile": mobile, "ts": datetime.utcnow().isoformat()})
         return Response(content=twiml, media_type="text/xml")
@@ -165,19 +167,14 @@ async def no_answer(request: Request):
     call_sid = form.get("CallSid", "unknown")
     status = form.get("CallStatus", "unknown")
     to_number = form.get("To", "unknown")
-    logger.info("No answer: SID=%s status=%s to=%s", call_sid, status, to_number)
     await manager.broadcast({"event": "no_answer", "call_sid": call_sid, "status": status, "to": to_number, "ts": datetime.utcnow().isoformat()})
-    twiml = generate_no_answer_twiml(config)
-    return Response(content=twiml, media_type="text/xml")
+    return Response(content=generate_no_answer_twiml(config), media_type="text/xml")
 
 
 @app.post("/agent-complete")
 async def agent_complete(request: Request, ext: str = "", agent: str = ""):
     form = await request.form()
     call_sid = form.get("CallSid", "unknown")
-    dial_status = form.get("DialCallStatus", "unknown")
-    logger.info("Agent complete: SID=%s status=%s", call_sid, dial_status)
-
     if agent:
         try:
             router.mark_available_by_index(int(agent))
@@ -185,7 +182,6 @@ async def agent_complete(request: Request, ext: str = "", agent: str = ""):
             pass
     elif ext:
         router.mark_available(ext)
-
     await manager.broadcast({"event": "agent_available", "agent": agent or ext, "call_sid": call_sid, "ts": datetime.utcnow().isoformat()})
     return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>', media_type="text/xml")
 
@@ -213,6 +209,90 @@ async def api_status():
         "dialer_running": dialer_process is not None and dialer_process.poll() is None,
         "ngrok_url": config["twilio"].get("webhook_base_url", ""),
     }
+
+
+@app.get("/api/services/status")
+async def services_status():
+    """Check all services — polled by the loading screen."""
+    # Asterisk
+    asterisk_ok = False
+    try:
+        result = subprocess.run(
+            ["wsl", "-e", "bash", "-c", "systemctl is-active asterisk 2>/dev/null"],
+            capture_output=True, text=True, timeout=4
+        )
+        asterisk_ok = "active" in result.stdout
+    except Exception:
+        pass
+
+    # Ngrok
+    ngrok_url = _get_ngrok_url()
+    ngrok_ok = bool(ngrok_url)
+
+    return {
+        "asterisk": asterisk_ok,
+        "api": True,
+        "ngrok": ngrok_ok,
+        "ngrok_url": ngrok_url,
+    }
+
+
+@app.post("/api/services/start-ngrok")
+async def start_ngrok_service():
+    """Start ngrok automatically — called by the loading screen."""
+    global ngrok_process
+
+    # Already running?
+    existing_url = _get_ngrok_url()
+    if existing_url:
+        _reload_config()
+        config["twilio"]["webhook_base_url"] = existing_url
+        with open(CONFIG_PATH, "w") as f:
+            config.write(f)
+        return {"ok": True, "url": existing_url, "already_running": True}
+
+    # Find ngrok executable
+    ngrok_paths = [
+        r"C:\Users\Admin\Downloads\ngrok-v3-stable-windows-amd64\ngrok.exe",
+        r"C:\Users\Admin\Downloads\ngrok.exe",
+        str(BASE_DIR / "ngrok.exe"),
+        "ngrok",
+    ]
+    ngrok_exe = None
+    for p in ngrok_paths:
+        try:
+            r = subprocess.run([p, "version"], capture_output=True, timeout=2)
+            if r.returncode == 0:
+                ngrok_exe = p
+                break
+        except Exception:
+            continue
+
+    if not ngrok_exe:
+        return {
+            "ok": False,
+            "error": "ngrok.exe not found. Download from https://ngrok.com/download and place it in the Smart Dialer folder."
+        }
+
+    ngrok_process = subprocess.Popen(
+        [ngrok_exe, "http", "5000"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Wait up to 10s for tunnel
+    for _ in range(10):
+        await asyncio.sleep(1)
+        url = _get_ngrok_url()
+        if url:
+            _reload_config()
+            config["twilio"]["webhook_base_url"] = url
+            with open(CONFIG_PATH, "w") as f:
+                config.write(f)
+            await manager.broadcast({"event": "ngrok_ready", "url": url, "ts": datetime.utcnow().isoformat()})
+            return {"ok": True, "url": url}
+
+    return {"ok": False, "error": "Ngrok started but tunnel not ready. Check http://localhost:4040"}
 
 
 @app.get("/api/config")
@@ -285,7 +365,6 @@ async def save_config(request: Request):
 
     with open(CONFIG_PATH, "w") as f:
         config.write(f)
-
     _reload_config()
     return {"ok": True}
 
@@ -340,20 +419,13 @@ async def stop_dialer():
 
 @app.get("/api/ngrok/detect")
 async def detect_ngrok():
-    try:
-        import urllib.request
-        with urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2) as r:
-            data = json.loads(r.read())
-        tunnels = data.get("tunnels", [])
-        if tunnels:
-            url = tunnels[0]["public_url"]
-            _reload_config()
-            config["twilio"]["webhook_base_url"] = url
-            with open(CONFIG_PATH, "w") as f:
-                config.write(f)
-            return {"ok": True, "url": url}
-    except Exception as e:
-        pass
+    url = _get_ngrok_url()
+    if url:
+        _reload_config()
+        config["twilio"]["webhook_base_url"] = url
+        with open(CONFIG_PATH, "w") as f:
+            config.write(f)
+        return {"ok": True, "url": url}
     return {"ok": False, "url": ""}
 
 
@@ -366,7 +438,6 @@ async def get_call_log():
 async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)
     try:
-        # Send initial state
         await ws.send_json({
             "event": "init",
             "agents": router.status(),
@@ -374,7 +445,7 @@ async def websocket_endpoint(ws: WebSocket):
             "ts": datetime.utcnow().isoformat(),
         })
         while True:
-            await ws.receive_text()  # keep alive
+            await ws.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(ws)
 

@@ -1,9 +1,33 @@
 "use client";
+import { useEffect } from "react";
 import { useDialerStore } from "@/lib/store";
 import { Phone, Wifi, WifiOff } from "lucide-react";
 
 export default function TopBar() {
-  const { wsConnected, system } = useDialerStore();
+  const { wsConnected, system, setSystem } = useDialerStore();
+
+  // Poll service status every 10s to keep top bar accurate
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const r = await fetch("http://localhost:5000/api/services/status");
+        if (r.ok) {
+          const d = await r.json();
+          setSystem({
+            asterisk: d.asterisk,
+            ngrok: d.ngrok,
+            ngrok_url: d.ngrok_url || "",
+            webhook: true,
+          });
+        }
+      } catch {
+        setSystem({ webhook: false });
+      }
+    };
+    check();
+    const t = setInterval(check, 10000);
+    return () => clearInterval(t);
+  }, [setSystem]);
 
   return (
     <header
@@ -42,8 +66,8 @@ export default function TopBar() {
       {/* Status pills */}
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <StatusPill label="ASTERISK" active={system.asterisk} />
-        <StatusPill label="WEBHOOK" active={system.webhook} />
-        <StatusPill label="NGROK" active={system.ngrok} />
+        <StatusPill label="API"      active={system.webhook} />
+        <StatusPill label="NGROK"    active={system.ngrok} />
         <div
           style={{
             display: "flex",
@@ -79,8 +103,15 @@ function StatusPill({ label, active }: { label: string; active: boolean }) {
       }}
     >
       <span
-        className={active ? "status-dot green" : "status-dot gray"}
-        style={{ width: 6, height: 6 }}
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          background: active ? "#00b894" : "#636e72",
+          boxShadow: active ? "0 0 6px #00b894" : "none",
+          display: "inline-block",
+          flexShrink: 0,
+        }}
       />
       {label}
     </div>

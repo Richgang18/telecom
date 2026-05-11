@@ -95,14 +95,15 @@ timeout /t 1 /nobreak >nul
 REM Start Next.js
 start "SmartDialer-UI" /MIN cmd /c "cd /d "%~dp0ui" && npm run dev 2>&1 >> "%~dp0ui.log""
 
-REM Wait for Next.js to be ready (poll up to 30s)
+REM Wait for Next.js port to be open (poll up to 40s — Turbopack needs time)
 set /a UI_WAIT=0
 :wait_ui
 timeout /t 2 /nobreak >nul
 set /a UI_WAIT+=2
-curl -s http://localhost:3000 >nul 2>&1
+REM Check if port 3000 is LISTENING (not curl — curl fails during compilation)
+netstat -ano | findstr ":3000 " | findstr "LISTENING" >nul 2>&1
 if not errorlevel 1 goto ui_ready
-if %UI_WAIT% GEQ 30 (
+if %UI_WAIT% GEQ 40 (
     echo  [!] UI taking longer than expected. Opening browser anyway...
     goto ui_ready
 )
@@ -117,9 +118,10 @@ echo  [OK] UI ready on port 3000
 echo.
 
 REM ============================================================================
-REM STEP 4: Open browser
+REM STEP 4: Open browser — wait extra 5s for first page compile
 REM ============================================================================
 echo  [4/4] Opening browser...
+timeout /t 5 /nobreak >nul
 start "" "http://localhost:3000"
 echo  [OK] Browser opened
 echo.
