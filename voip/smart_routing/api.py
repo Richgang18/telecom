@@ -58,6 +58,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Ngrok free tier shows an interstitial page unless this header is present
+# Add it as a middleware so ALL responses include it
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class NgrokBypassMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["ngrok-skip-browser-warning"] = "true"
+        return response
+
+app.add_middleware(NgrokBypassMiddleware)
+
 router = AgentRouter(config)
 
 # ---------------------------------------------------------------------------
@@ -157,10 +169,147 @@ def _get_ngrok_url() -> str:
     return ""
 
 
+@app.get("/ping")
+async def ping():
+    """Simple test endpoint — verify ngrok can reach the API."""
+    live_url = _get_ngrok_url()
+    _reload_config()
+    return {
+        "status": "ok",
+        "live_ngrok_url": live_url,
+        "config_webhook_url": config["twilio"].get("webhook_base_url", ""),
+        "agent_mobile": config["agents"].get("agent_mobile_numbers", ""),
+        "agent_mode": config["agents"].get("agent_mode", ""),
+        "agents": router.status(),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Twilio Webhook endpoints
 # ---------------------------------------------------------------------------
+
 @app.post("/connect")
+async def connect_call(request: Request):
+    # Log EVERYTHING from Twilio immediately before any processing
+    try:
+        body = await request.body()
+        logger.info("=== /connect HIT === raw body: %s", body.decode("utf-8", errors="replace"))
+    except Exception as raw_err:
+        logger.error("=== /connect HIT but failed to read body: %s", raw_err)
+
+    try:
+        form = await request.form()
+    except Exception as form_err:
+        logger.error("/connect form parse error: %s", form_err)
+        return Response(
+            content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+            media_type="text/xml"
+        )
+
+    call_sid    = form.get("CallSid", "unknown")
+    answered_by = form.get("AnsweredBy", "unknown")
+    call_status = form.get("CallStatus", "unknown")
+
+    logger.info("/connect: SID=%s answered_by=%s call_status=%s", call_sid, answered_by, call_status)
+
+    try:
+        # Machine detected — drop voicemail
+        if answered_by in ("machine_start", "machine_end", "machine_end_beep",
+                           "machine_end_silence", "machine_end_other", "fax"):
+            logger.info("AMD machine detected (%s) for call %s", answered_by, call_sid)
+            if call_sid in connected_calls:
+                logger.info("Call %s already bridged — ignoring AMD callback", call_sid)
+                return Response(
+                    content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+                    media_type="text/xml"
+                )
+            await manager.broadcast({"event": "amd_machine", "call_sid": call_sid, "ts": datetime.utcnow().isoformat()})
+            return Response(content=generate_no_answer_twiml(config), media_type="text/xml")
+
+        # Already connected — ignore duplicate
+        if call_sid in connected_calls:
+            logger.info("Call %s already connected — ignoring duplicate /connect", call_sid)
+            return Response(
+                content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+                media_type="text/xml"
+            )
+
+        # Reload config to get latest mobile number
+        _reload_config()
+        agent_mode = config["agents"].get("agent_mode", "softphone")
+        logger.info("Agent mode: %s", agent_mode)
+
+        if agent_mode == "mobile":
+            agent_index = router.get_available_agent_index()
+            logger.info("Available agent index: %s", agent_index)
+
+            if agent_index is None:
+                logger.warning("No agents available for call %s", call_sid)
+                await manager.broadcast({"event": "no_agent", "call_sid": call_sid, "ts": datetime.utcnow().isoformat()})
+                return Response(content=router.generate_busy_twiml(), media_type="text/xml")
+
+            mobile_numbers_raw = config["agents"].get("agent_mobile_numbers", "")
+            mobile_numbers = [n.strip() for n in mobile_numbers_raw.split(",")]
+            logger.info("Mobile numbers configured: %s", mobile_numbers)
+
+            if agent_index >= len(mobile_numbers) or not mobile_numbers[agent_index]:
+                logger.error("No mobile number for agent index %d (configured: %s)", agent_index, mobile_numbers_raw)
+                return Response(content=generate_no_answer_twiml(config), media_type="text/xml")
+
+            mobile  = mobile_numbers[agent_index]
+            timeout = int(config["agents"].get("agent_timeout", "20"))
+
+            router.mark_busy_by_index(agent_index, call_sid)
+            agent_busy_since[str(agent_index)] = datetime.utcnow()
+            connected_calls.add(call_sid)
+
+            live_url     = _get_ngrok_url()
+            webhook_base = (live_url or config["twilio"]["webhook_base_url"]).rstrip("/")
+
+            logger.info("BRIDGING: call=%s mobile=%s webhook=%s timeout=%s",
+                        call_sid, mobile, webhook_base, timeout)
+
+            twiml = (
+                f'<?xml version="1.0" encoding="UTF-8"?>'
+                f'<Response>'
+                f'<Dial timeout="{timeout}" action="{webhook_base}/agent-complete?agent={agent_index}">'
+                f'<Number>{mobile}</Number>'
+                f'</Dial>'
+                f'<Play>{webhook_base}/voicemail-audio</Play>'
+                f'</Response>'
+            )
+            logger.info("TwiML response: %s", twiml)
+
+            await manager.broadcast({
+                "event": "call_connected", "call_sid": call_sid,
+                "agent": agent_index, "mobile": mobile,
+                "ts": datetime.utcnow().isoformat()
+            })
+            return Response(content=twiml, media_type="text/xml")
+
+        else:
+            ext = router.get_available_agent()
+            if ext is None:
+                return Response(content=router.generate_busy_twiml(), media_type="text/xml")
+            router.mark_busy(ext, call_sid)
+            agent_busy_since[ext] = datetime.utcnow()
+            connected_calls.add(call_sid)
+            live_url     = _get_ngrok_url()
+            webhook_base = (live_url or config["twilio"]["webhook_base_url"]).rstrip("/")
+            twiml = router.generate_connect_twiml(ext, webhook_base)
+            logger.info("Softphone TwiML: %s", twiml)
+            await manager.broadcast({
+                "event": "call_connected", "call_sid": call_sid,
+                "agent": ext, "ts": datetime.utcnow().isoformat()
+            })
+            return Response(content=twiml, media_type="text/xml")
+
+    except Exception as e:
+        logger.error("CRITICAL ERROR in /connect for call %s: %s", call_sid, str(e), exc_info=True)
+        return Response(
+            content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+            media_type="text/xml"
+        )
 async def connect_call(request: Request):
     form = await request.form()
     call_sid = form.get("CallSid", "unknown")

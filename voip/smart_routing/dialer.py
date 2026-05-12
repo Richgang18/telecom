@@ -190,6 +190,10 @@ class SmartDialer:
 
         self.logger.info("Dialing %s (%s)...", name, phone)
 
+        # Always read the LATEST webhook URL from config (ngrok may have changed)
+        self.config.read(CONFIG_PATH)
+        self.webhook_base = self.config["twilio"]["webhook_base_url"].rstrip("/")
+
         # Get AMD settings from config
         enable_amd = self.config["agents"].getboolean("enable_amd", True)
         amd_timeout = int(self.config["agents"].get("amd_timeout", "30"))
@@ -204,6 +208,8 @@ class SmartDialer:
             "status_callback_method": "POST",
             "timeout": self.ring_timeout,
         }
+
+        self.logger.info("Using webhook URL: %s", self.webhook_base)
         
         # Add AMD if enabled
         if enable_amd:
