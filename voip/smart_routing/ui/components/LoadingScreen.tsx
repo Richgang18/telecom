@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Phone, CheckCircle, XCircle, Loader } from "lucide-react";
+import { Phone, CheckCircle, XCircle, Loader, AlertTriangle } from "lucide-react";
 
 interface ServiceState {
   api: boolean;
@@ -22,22 +22,22 @@ export default function LoadingScreen({ onReady }: Props) {
     ngrok_url: "",
   });
   const [ngrokStarting, setNgrokStarting] = useState(false);
+  const [ngrokAttempts, setNgrokAttempts] = useState(0);
   const [dots, setDots] = useState(".");
 
-  // Animate dots
   useEffect(() => {
     const t = setInterval(() => setDots((d) => (d.length >= 3 ? "." : d + ".")), 500);
     return () => clearInterval(t);
   }, []);
 
-  // Poll services every 2s
   useEffect(() => {
     let cancelled = false;
 
     const poll = async () => {
-      // Step 1: Check API
       try {
-        const r = await fetch("http://localhost:5000/api/services/status", { signal: AbortSignal.timeout(3000) });
+        const r = await fetch("http://localhost:5000/api/services/status", {
+          signal: AbortSignal.timeout(3000),
+        });
         if (r.ok) {
           const data = await r.json();
           if (!cancelled) {
@@ -49,9 +49,10 @@ export default function LoadingScreen({ onReady }: Props) {
               ngrok_url: data.ngrok_url || prev.ngrok_url,
             }));
 
-            // Auto-start ngrok if not running
-            if (!data.ngrok && !ngrokStarting) {
+            // Auto-start ngrok if not running and haven't tried too many times
+            if (!data.ngrok && !ngrokStarting && ngrokAttempts < 2) {
               setNgrokStarting(true);
+              setNgrokAttempts((n) => n + 1);
               try {
                 const nr = await fetch("http://localhost:5000/api/services/start-ngrok", {
                   method: "POST",
@@ -83,17 +84,21 @@ export default function LoadingScreen({ onReady }: Props) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [ngrokStarting]);
+  }, [ngrokStarting, ngrokAttempts]);
 
-  // All ready → show main UI
+  // Ready when API + Asterisk are up (Ngrok is optional — can be set up later)
+  const coreReady = services.api && services.asterisk;
+  const allReady  = coreReady && services.ngrok;
+  const ngrokFailed = ngrokAttempts >= 2 && !services.ngrok;
+
   useEffect(() => {
-    if (services.api && services.asterisk && services.ngrok) {
+    if (allReady) {
       const t = setTimeout(onReady, 800);
       return () => clearTimeout(t);
     }
-  }, [services, onReady]);
+  }, [allReady, onReady]);
 
-  const allReady = services.api && services.asterisk && services.ngrok;
+  const progress = [services.api, services.asterisk, services.ngrok].filter(Boolean).length;
 
   return (
     <div
@@ -109,18 +114,11 @@ export default function LoadingScreen({ onReady }: Props) {
       }}
     >
       {/* Logo */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 48 }}>
-        <div
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: "50%",
-            background: "#e94560",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 40 }}>
+        <div style={{
+          width: 56, height: 56, borderRadius: "50%", background: "#e94560",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
           <Phone size={28} color="#fff" />
         </div>
         <div>
@@ -134,18 +132,10 @@ export default function LoadingScreen({ onReady }: Props) {
       </div>
 
       {/* Service checklist */}
-      <div
-        style={{
-          background: "#16213e",
-          border: "1px solid #2d3436",
-          borderRadius: 10,
-          padding: "28px 40px",
-          minWidth: 340,
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
-        }}
-      >
+      <div style={{
+        background: "#16213e", border: "1px solid #2d3436", borderRadius: 10,
+        padding: "28px 40px", minWidth: 360, display: "flex", flexDirection: "column", gap: 18,
+      }}>
         <div style={{ fontSize: 11, color: "#636e72", letterSpacing: 2, textTransform: "uppercase", marginBottom: 4 }}>
           Starting Services
         </div>
@@ -160,11 +150,8 @@ export default function LoadingScreen({ onReady }: Props) {
           label="Asterisk PBX"
           status={services.asterisk ? "ok" : services.api ? "loading" : "waiting"}
           detail={
-            services.asterisk
-              ? "Running in WSL2"
-              : services.api
-              ? `Starting${dots}`
-              : "Waiting for API..."
+            services.asterisk ? "Running in WSL2" :
+            services.api ? `Starting${dots}` : "Waiting for API..."
           }
         />
 
@@ -172,90 +159,71 @@ export default function LoadingScreen({ onReady }: Props) {
           label="Ngrok Tunnel"
           status={
             services.ngrok ? "ok" :
-            services.ngrok_error ? "error" :
+            ngrokFailed ? "error" :
             ngrokStarting ? "loading" :
             services.api ? "loading" : "waiting"
           }
           detail={
-            services.ngrok
-              ? services.ngrok_url
-              : services.ngrok_error
-              ? services.ngrok_error
-              : ngrokStarting
-              ? `Starting tunnel${dots}`
-              : services.api
-              ? `Detecting${dots}`
-              : "Waiting..."
+            services.ngrok    ? services.ngrok_url :
+            ngrokFailed       ? "Not found — skip or add ngrok.exe to folder" :
+            ngrokStarting     ? `Starting tunnel${dots}` :
+            services.api      ? `Detecting${dots}` : "Waiting..."
           }
         />
       </div>
 
-      {/* Status message */}
-      <div style={{ marginTop: 28, fontSize: 13, color: allReady ? "#00b894" : "#636e72" }}>
-        {allReady
-          ? "✓ All systems ready — launching dashboard..."
-          : `Initializing${dots}`}
-      </div>
-
       {/* Progress bar */}
-      <div
-        style={{
-          marginTop: 16,
-          width: 340,
-          height: 3,
-          background: "#2d3436",
+      <div style={{ marginTop: 20, width: 360, height: 3, background: "#2d3436", borderRadius: 2, overflow: "hidden" }}>
+        <div style={{
+          height: "100%",
+          background: allReady ? "#00b894" : "#e94560",
+          width: `${(progress / 3) * 100}%`,
+          transition: "width 0.5s ease",
           borderRadius: 2,
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            height: "100%",
-            background: allReady ? "#00b894" : "#e94560",
-            width: `${
-              ([services.api, services.asterisk, services.ngrok].filter(Boolean).length / 3) * 100
-            }%`,
-            transition: "width 0.5s ease",
-            borderRadius: 2,
-          }}
-        />
+        }} />
       </div>
 
-      {/* Ngrok error help */}
-      {services.ngrok_error && (
-        <div
-          style={{
-            marginTop: 20,
-            background: "rgba(214,48,49,0.1)",
-            border: "1px solid rgba(214,48,49,0.3)",
-            borderRadius: 6,
-            padding: "12px 16px",
-            maxWidth: 400,
-            fontSize: 11,
-            color: "#ff7675",
-            textAlign: "center",
-          }}
-        >
-          <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠ Ngrok not found</div>
-          <div>Download ngrok.exe from ngrok.com and place it in the Smart Dialer folder, then restart.</div>
+      {/* Status message */}
+      <div style={{ marginTop: 16, fontSize: 13, color: allReady ? "#00b894" : "#636e72" }}>
+        {allReady ? "All systems ready — launching dashboard..." : `Initializing${dots}`}
+      </div>
+
+      {/* Ngrok failed — show skip button */}
+      {ngrokFailed && coreReady && (
+        <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+          <div style={{
+            background: "rgba(253,203,110,0.1)", border: "1px solid rgba(253,203,110,0.3)",
+            borderRadius: 6, padding: "10px 16px", maxWidth: 380, fontSize: 11,
+            color: "#fdcb6e", textAlign: "center",
+          }}>
+            <AlertTriangle size={13} style={{ display: "inline", marginRight: 6 }} />
+            Ngrok not found. Place <strong>ngrok.exe</strong> in the Smart Dialer folder and restart.
+            Calls will not work without it.
+          </div>
+          <button
+            onClick={onReady}
+            style={{
+              background: "#0984e3", color: "#fff", border: "none", borderRadius: 4,
+              padding: "8px 24px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+              letterSpacing: 0.5,
+            }}
+          >
+            Continue Anyway (Ngrok Missing)
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-function ServiceRow({
-  label,
-  status,
-  detail,
-}: {
+function ServiceRow({ label, status, detail }: {
   label: string;
   status: "ok" | "loading" | "error" | "waiting";
   detail: string;
 }) {
   const icon =
-    status === "ok" ? <CheckCircle size={18} color="#00b894" /> :
-    status === "error" ? <XCircle size={18} color="#d63031" /> :
+    status === "ok"      ? <CheckCircle size={18} color="#00b894" /> :
+    status === "error"   ? <XCircle size={18} color="#d63031" /> :
     status === "loading" ? (
       <Loader size={18} color="#0984e3" style={{ animation: "spin 1s linear infinite" }} />
     ) : (
@@ -267,14 +235,10 @@ function ServiceRow({
       <div style={{ flexShrink: 0 }}>{icon}</div>
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>{label}</div>
-        <div
-          style={{
-            fontSize: 10,
-            color: status === "ok" ? "#00b894" : status === "error" ? "#d63031" : "#636e72",
-            marginTop: 1,
-            wordBreak: "break-all",
-          }}
-        >
+        <div style={{
+          fontSize: 10, marginTop: 1, wordBreak: "break-all",
+          color: status === "ok" ? "#00b894" : status === "error" ? "#d63031" : "#636e72",
+        }}>
           {detail}
         </div>
       </div>
