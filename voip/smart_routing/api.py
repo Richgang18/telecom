@@ -99,21 +99,20 @@ connected_calls: set[str] = set()
 
 
 def _reload_config():
-    global config, router
+    """Reload config.ini values only. Does NOT reset the router/agent state."""
+    global config
     config = load_config()
-    router = AgentRouter(config)
 
 
 async def _stuck_call_watchdog():
     """
     Background task: auto-release agents stuck busy for longer than
-    agent_timeout + 60s safety buffer. Handles cases where Twilio
-    never fires the agent-complete webhook.
+    agent_timeout + 60s safety buffer.
+    NOTE: Does NOT reload config/router — that would reset agent state.
     """
     while True:
         await asyncio.sleep(30)
         try:
-            _reload_config()
             max_busy = int(config["agents"].get("agent_timeout", "20")) + 90
             now = datetime.utcnow()
             status = router.status()
@@ -210,8 +209,10 @@ async def connect_call(request: Request):
         agent_busy_since[str(agent_index)] = datetime.utcnow()
         connected_calls.add(call_sid)
 
-        webhook_base = config["twilio"]["webhook_base_url"].rstrip("/")
-        logger.info("Bridging call %s to mobile agent %d: %s", call_sid, agent_index, mobile)
+        # Always use the LIVE ngrok URL, not the stale one from config
+        live_url = _get_ngrok_url()
+        webhook_base = (live_url or config["twilio"]["webhook_base_url"]).rstrip("/")
+        logger.info("Bridging call %s to mobile agent %d: %s (webhook: %s)", call_sid, agent_index, mobile, webhook_base)
 
         twiml = (
             f'<?xml version="1.0" encoding="UTF-8"?>'
@@ -598,17 +599,20 @@ async def start_dialer():
         bufsize=1,
     )
 
+    # Capture the event loop in the main thread before spawning the worker
+    loop = asyncio.get_event_loop()
+
     def _stream():
         for line in dialer_process.stdout:
             line = line.strip()
             if line:
                 asyncio.run_coroutine_threadsafe(
                     manager.broadcast({"event": "log", "msg": line, "ts": datetime.utcnow().isoformat()}),
-                    asyncio.get_event_loop(),
+                    loop,
                 )
         asyncio.run_coroutine_threadsafe(
             manager.broadcast({"event": "dialer_stopped", "ts": datetime.utcnow().isoformat()}),
-            asyncio.get_event_loop(),
+            loop,
         )
 
     threading.Thread(target=_stream, daemon=True).start()
