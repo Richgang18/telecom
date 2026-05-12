@@ -58,18 +58,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Ngrok free tier shows an interstitial page unless this header is present
-# Add it as a middleware so ALL responses include it
-from starlette.middleware.base import BaseHTTPMiddleware
-
-class NgrokBypassMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        response.headers["ngrok-skip-browser-warning"] = "true"
-        return response
-
-app.add_middleware(NgrokBypassMiddleware)
-
 router = AgentRouter(config)
 
 # ---------------------------------------------------------------------------
@@ -96,6 +84,7 @@ class ConnectionManager:
                 dead.append(ws)
         for ws in dead:
             self.disconnect(ws)
+        # Never raise — broadcast is fire-and-forget
 
 
 manager = ConnectionManager()
@@ -157,9 +146,9 @@ async def startup_event():
 
 
 def _get_ngrok_url() -> str:
-    """Return current ngrok tunnel URL or empty string."""
+    """Return current ngrok tunnel URL or empty string. Non-blocking."""
     try:
-        with urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2) as r:
+        with urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=1) as r:
             data = json.loads(r.read())
         tunnels = data.get("tunnels", [])
         if tunnels:
@@ -167,6 +156,23 @@ def _get_ngrok_url() -> str:
     except Exception:
         pass
     return ""
+
+
+# Cache the ngrok URL so we don't block on every call
+_cached_ngrok_url: str = ""
+
+def _get_webhook_base() -> str:
+    """Get webhook base URL — uses cached ngrok URL or config fallback. Never blocks."""
+    global _cached_ngrok_url
+    # Try to get live URL (fast, 1s timeout)
+    live = _get_ngrok_url()
+    if live:
+        _cached_ngrok_url = live
+        return live.rstrip("/")
+    # Fall back to cached or config
+    if _cached_ngrok_url:
+        return _cached_ngrok_url.rstrip("/")
+    return config["twilio"].get("webhook_base_url", "").rstrip("/")
 
 
 @app.get("/ping")
@@ -260,14 +266,19 @@ async def connect_call(request: Request):
             timeout = int(config["agents"].get("agent_timeout", "20"))
 
             router.mark_busy_by_index(agent_index, call_sid)
+            print("DEBUG1: mark_busy done", flush=True)
             agent_busy_since[str(agent_index)] = datetime.utcnow()
+            print("DEBUG2: agent_busy_since done", flush=True)
             connected_calls.add(call_sid)
+            print("DEBUG3: connected_calls done", flush=True)
 
-            live_url     = _get_ngrok_url()
-            webhook_base = (live_url or config["twilio"]["webhook_base_url"]).rstrip("/")
+            # Use config value directly — never block the event loop checking ngrok
+            webhook_base = config["twilio"].get("webhook_base_url", "").rstrip("/")
+            print(f"DEBUG4: webhook_base={webhook_base}", flush=True)
 
             logger.info("BRIDGING: call=%s mobile=%s webhook=%s timeout=%s",
                         call_sid, mobile, webhook_base, timeout)
+            print("DEBUG5: about to build twiml", flush=True)
 
             twiml = (
                 f'<?xml version="1.0" encoding="UTF-8"?>'
@@ -280,11 +291,17 @@ async def connect_call(request: Request):
             )
             logger.info("TwiML response: %s", twiml)
 
-            await manager.broadcast({
-                "event": "call_connected", "call_sid": call_sid,
-                "agent": agent_index, "mobile": mobile,
-                "ts": datetime.utcnow().isoformat()
-            })
+            # Broadcast non-blocking — never let this crash the response
+            try:
+                await manager.broadcast({
+                    "event": "call_connected", "call_sid": call_sid,
+                    "agent": agent_index, "mobile": mobile,
+                    "ts": datetime.utcnow().isoformat()
+                })
+            except Exception as broadcast_err:
+                logger.warning("Broadcast failed (non-fatal): %s", broadcast_err)
+
+            logger.info("Returning TwiML to Twilio for call %s", call_sid)
             return Response(content=twiml, media_type="text/xml")
 
         else:
@@ -294,8 +311,7 @@ async def connect_call(request: Request):
             router.mark_busy(ext, call_sid)
             agent_busy_since[ext] = datetime.utcnow()
             connected_calls.add(call_sid)
-            live_url     = _get_ngrok_url()
-            webhook_base = (live_url or config["twilio"]["webhook_base_url"]).rstrip("/")
+            webhook_base = config["twilio"].get("webhook_base_url", "").rstrip("/")
             twiml = router.generate_connect_twiml(ext, webhook_base)
             logger.info("Softphone TwiML: %s", twiml)
             await manager.broadcast({
@@ -401,7 +417,10 @@ async def no_answer(request: Request):
     call_sid = form.get("CallSid", "unknown")
     status = form.get("CallStatus", "unknown")
     to_number = form.get("To", "unknown")
-    await manager.broadcast({"event": "no_answer", "call_sid": call_sid, "status": status, "to": to_number, "ts": datetime.utcnow().isoformat()})
+    try:
+        await manager.broadcast({"event": "no_answer", "call_sid": call_sid, "status": status, "to": to_number, "ts": datetime.utcnow().isoformat()})
+    except Exception:
+        pass
     return Response(content=generate_no_answer_twiml(config), media_type="text/xml")
 
 
