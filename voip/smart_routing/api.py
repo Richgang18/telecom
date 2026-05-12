@@ -91,11 +91,55 @@ call_log: list[dict] = []
 dialer_process: subprocess.Popen | None = None
 ngrok_process: subprocess.Popen | None = None
 
+# Track when each agent was marked busy (for timeout-based release)
+agent_busy_since: dict[str, datetime] = {}
+
 
 def _reload_config():
     global config, router
     config = load_config()
     router = AgentRouter(config)
+
+
+async def _stuck_call_watchdog():
+    """
+    Background task: auto-release agents stuck busy for longer than
+    agent_timeout + 60s safety buffer. Handles cases where Twilio
+    never fires the agent-complete webhook.
+    """
+    while True:
+        await asyncio.sleep(30)
+        try:
+            _reload_config()
+            max_busy = int(config["agents"].get("agent_timeout", "20")) + 90
+            now = datetime.utcnow()
+            status = router.status()
+            for key, info in status.items():
+                if info.get("status") == "busy" and key in agent_busy_since:
+                    elapsed = (now - agent_busy_since[key]).total_seconds()
+                    if elapsed > max_busy:
+                        logger.warning(
+                            "Stuck call detected: agent %s busy for %.0fs — force releasing",
+                            key, elapsed
+                        )
+                        try:
+                            router.mark_available_by_index(int(key))
+                        except (ValueError, AttributeError):
+                            router.mark_available(key)
+                        agent_busy_since.pop(key, None)
+                        await manager.broadcast({
+                            "event": "agent_available",
+                            "agent": key,
+                            "reason": "stuck_call_timeout",
+                            "ts": now.isoformat()
+                        })
+        except Exception as e:
+            logger.error("Watchdog error: %s", e)
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(_stuck_call_watchdog())
 
 
 def _get_ngrok_url() -> str:
@@ -141,6 +185,7 @@ async def connect_call(request: Request):
         mobile = mobile_numbers[agent_index]
         timeout = int(config["agents"].get("agent_timeout", "20"))
         router.mark_busy_by_index(agent_index, call_sid)
+        agent_busy_since[str(agent_index)] = datetime.utcnow()
         webhook_base = config["twilio"]["webhook_base_url"].rstrip("/")
 
         logger.info("Bridging call %s to mobile agent %d: %s", call_sid, agent_index, mobile)
@@ -159,6 +204,7 @@ async def connect_call(request: Request):
         if ext is None:
             return Response(content=router.generate_busy_twiml(), media_type="text/xml")
         router.mark_busy(ext, call_sid)
+        agent_busy_since[ext] = datetime.utcnow()
         webhook_base = config["twilio"]["webhook_base_url"].rstrip("/")
         twiml = router.generate_connect_twiml(ext, webhook_base)
         await manager.broadcast({"event": "call_connected", "call_sid": call_sid, "agent": ext, "ts": datetime.utcnow().isoformat()})
@@ -179,15 +225,73 @@ async def no_answer(request: Request):
 async def agent_complete(request: Request, ext: str = "", agent: str = ""):
     form = await request.form()
     call_sid = form.get("CallSid", "unknown")
+    dial_status = form.get("DialCallStatus", "unknown")
+    logger.info("Agent complete: SID=%s status=%s agent=%s ext=%s", call_sid, dial_status, agent, ext)
+
     if agent:
         try:
             router.mark_available_by_index(int(agent))
+            agent_busy_since.pop(agent, None)
+            logger.info("Mobile agent %s marked available after call %s", agent, call_sid)
         except ValueError:
             pass
     elif ext:
         router.mark_available(ext)
-    await manager.broadcast({"event": "agent_available", "agent": agent or ext, "call_sid": call_sid, "ts": datetime.utcnow().isoformat()})
-    return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>', media_type="text/xml")
+        agent_busy_since.pop(ext, None)
+        logger.info("Softphone agent %s marked available after call %s", ext, call_sid)
+
+    await manager.broadcast({
+        "event": "agent_available",
+        "agent": agent or ext,
+        "call_sid": call_sid,
+        "dial_status": dial_status,
+        "ts": datetime.utcnow().isoformat()
+    })
+    return Response(
+        content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+        media_type="text/xml"
+    )
+
+
+@app.post("/call-status")
+async def call_status(request: Request):
+    """
+    Twilio calls this for ALL call status updates (initiated, ringing, answered, completed).
+    Use this as a safety net to release agents when calls complete,
+    even if /agent-complete was never called.
+    """
+    form = await request.form()
+    call_sid = form.get("CallSid", "unknown")
+    call_status = form.get("CallStatus", "unknown")
+    logger.info("Call status update: SID=%s status=%s", call_sid, call_status)
+
+    # If call is terminal, make sure agent is freed
+    if call_status in ("completed", "failed", "busy", "no-answer", "canceled"):
+        # Find and release any agent holding this call
+        status = router.status()
+        for key, info in status.items():
+            if info.get("call_sid") == call_sid:
+                try:
+                    router.mark_available_by_index(int(key))
+                except (ValueError, AttributeError):
+                    router.mark_available(key)
+                logger.info("Safety release: agent %s freed after call %s (%s)", key, call_sid, call_status)
+                await manager.broadcast({
+                    "event": "agent_available",
+                    "agent": key,
+                    "call_sid": call_sid,
+                    "reason": f"safety_release_{call_status}",
+                    "ts": datetime.utcnow().isoformat()
+                })
+                break
+
+    await manager.broadcast({
+        "event": "call_status",
+        "call_sid": call_sid,
+        "status": call_status,
+        "ts": datetime.utcnow().isoformat()
+    })
+    return Response(content="", status_code=204)
 
 
 @app.get("/voicemail-audio")

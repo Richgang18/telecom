@@ -8,8 +8,9 @@ $ErrorActionPreference = "SilentlyContinue"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PidFile   = "$env:TEMP\smartdialer_pids.txt"
 
-$script:apiProc = $null
-$script:uiProc  = $null
+$script:apiProc  = $null
+$script:uiProc   = $null
+$script:ngrokProc = $null
 
 function Log($msg) {
     $t = Get-Date -Format "HH:mm:ss"
@@ -65,9 +66,9 @@ function Stop-All {
     Write-Host ""
     Write-Host "  Stopping all services..." -ForegroundColor Yellow
 
-    foreach ($p in @($script:apiProc, $script:uiProc)) {
+    foreach ($p in @($script:apiProc, $script:uiProc, $script:ngrokProc)) {
         if ($null -ne $p -and -not $p.HasExited) {
-            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            taskkill /PID $p.Id /F /T 2>$null | Out-Null
         }
     }
 
@@ -75,7 +76,8 @@ function Stop-All {
         Kill-Port $port
     }
 
-    Get-Process -Name "node" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    taskkill /IM node.exe /F 2>$null | Out-Null
+    taskkill /IM ngrok.exe /F 2>$null | Out-Null
 
     if (Test-Path $PidFile) {
         Remove-Item $PidFile -Force
@@ -130,6 +132,75 @@ if (Api-Alive) {
     Log "API ready on port 5000"
 } else {
     Log "API slow to start - continuing anyway"
+}
+
+# ── STEP 2b: Start Ngrok from launcher ───────────────────────
+Log "Starting Ngrok tunnel..."
+
+# Find ngrok
+$ngrokExe = $null
+$ngrokPaths = @(
+    "$ScriptDir\ngrok.exe",
+    "$ScriptDir\ngrok",
+    "C:\Users\Admin\Downloads\ngrok-v3-stable-windows-amd64\ngrok.exe",
+    "C:\Users\Admin\Downloads\ngrok.exe",
+    "ngrok"
+)
+foreach ($p in $ngrokPaths) {
+    try {
+        $test = & $p version 2>$null
+        if ($LASTEXITCODE -eq 0) { $ngrokExe = $p; break }
+    } catch {}
+}
+
+if ($ngrokExe) {
+    # Configure authtoken if set in config
+    $ngrokToken = ""
+    if (Test-Path "$ScriptDir\config.ini") {
+        $tline = Get-Content "$ScriptDir\config.ini" | Where-Object { $_ -match "ngrok_authtoken\s*=" }
+        if ($tline) {
+            $ngrokToken = ($tline -split "=", 2)[1].Trim()
+        }
+    }
+    if ($ngrokToken -and $ngrokToken.Length -gt 10) {
+        & $ngrokExe config add-authtoken $ngrokToken 2>$null | Out-Null
+        Log "Ngrok authtoken configured"
+    }
+
+    # Kill any existing ngrok
+    Kill-Port 4040
+    taskkill /IM ngrok.exe /F 2>$null | Out-Null
+    Start-Sleep -Milliseconds 500
+
+    $script:ngrokProc = Start-Process $ngrokExe `
+        -ArgumentList "http", "5000" `
+        -WindowStyle Hidden `
+        -PassThru
+    $childPids.Add($script:ngrokProc.Id)
+
+    # Wait up to 10s for tunnel
+    $nw = 0
+    $ngrokReady = $false
+    while ($nw -lt 10 -and -not $ngrokReady) {
+        Start-Sleep 1
+        $nw++
+        try {
+            $resp = Invoke-WebRequest "http://localhost:4040/api/tunnels" -TimeoutSec 1 -UseBasicParsing -EA Stop
+            $data = $resp.Content | ConvertFrom-Json
+            if ($data.tunnels.Count -gt 0) {
+                $ngrokUrl = $data.tunnels[0].public_url
+                Log "Ngrok tunnel ready: $ngrokUrl"
+                # Save to config.ini
+                $configContent = Get-Content "$ScriptDir\config.ini" -Raw
+                $configContent = $configContent -replace "webhook_base_url\s*=.*", "webhook_base_url = $ngrokUrl"
+                Set-Content "$ScriptDir\config.ini" $configContent -Encoding UTF8
+                $ngrokReady = $true
+            }
+        } catch {}
+    }
+    if (-not $ngrokReady) { Log "Ngrok starting slowly - UI will detect it" }
+} else {
+    Log "Ngrok not found - skipping (place ngrok.exe in Smart Dialer folder)"
 }
 
 # ── STEP 3: Start Next.js UI ──────────────────────────────────

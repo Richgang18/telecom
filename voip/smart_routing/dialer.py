@@ -198,11 +198,9 @@ class SmartDialer:
         call_params = {
             "to": phone,
             "from_": self.from_number,
-            # When answered → connect to agent
             "url": f"{self.webhook_base}/connect",
-            # When not answered → drop voicemail
-            "status_callback": f"{self.webhook_base}/no-answer",
-            "status_callback_event": ["no-answer", "busy", "failed"],
+            "status_callback": f"{self.webhook_base}/call-status",
+            "status_callback_event": ["initiated", "ringing", "answered", "completed"],
             "status_callback_method": "POST",
             "timeout": self.ring_timeout,
         }
