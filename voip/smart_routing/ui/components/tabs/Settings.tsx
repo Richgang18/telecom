@@ -68,8 +68,15 @@ export default function Settings() {
           type="password"
           placeholder="Your WSL2 user password"
         />
+        <Field
+          label="Ngrok Authtoken (from dashboard.ngrok.com)"
+          value={cfg.system?.ngrok_authtoken || ""}
+          onChange={(v) => update("system", "ngrok_authtoken", v)}
+          type="password"
+          placeholder="Paste your ngrok authtoken here"
+        />
         <div style={{ fontSize: 10, color: "#636e72", marginTop: -6 }}>
-          This is stored locally in config.ini and used only to start Asterisk automatically.
+          Get your authtoken at: https://dashboard.ngrok.com/get-started/your-authtoken
         </div>
       </Section>
 

@@ -239,7 +239,7 @@ async def services_status():
 
 @app.post("/api/services/start-ngrok")
 async def start_ngrok_service():
-    """Start ngrok automatically — called by the loading screen."""
+    """Start ngrok - called by the loading screen."""
     global ngrok_process
 
     # Already running?
@@ -251,19 +251,21 @@ async def start_ngrok_service():
             config.write(f)
         return {"ok": True, "url": existing_url, "already_running": True}
 
-    # Find ngrok executable
+    # Find ngrok - check same folder first (highest priority)
     ngrok_paths = [
+        str(BASE_DIR / "ngrok.exe"),
+        str(BASE_DIR / "ngrok"),
         r"C:\Users\Admin\Downloads\ngrok-v3-stable-windows-amd64\ngrok.exe",
         r"C:\Users\Admin\Downloads\ngrok.exe",
-        str(BASE_DIR / "ngrok.exe"),
         "ngrok",
     ]
     ngrok_exe = None
     for p in ngrok_paths:
         try:
-            r = subprocess.run([p, "version"], capture_output=True, timeout=2)
+            r = subprocess.run([p, "version"], capture_output=True, timeout=3)
             if r.returncode == 0:
                 ngrok_exe = p
+                logger.info("Found ngrok at: %s", p)
                 break
         except Exception:
             continue
@@ -271,17 +273,29 @@ async def start_ngrok_service():
     if not ngrok_exe:
         return {
             "ok": False,
-            "error": "ngrok.exe not found. Download from https://ngrok.com/download and place it in the Smart Dialer folder."
+            "error": "ngrok.exe not found. Place ngrok.exe in the Smart Dialer folder."
         }
 
+    # Configure authtoken if set in config
+    if config.has_section("system"):
+        ngrok_token = config["system"].get("ngrok_authtoken", "").strip()
+        if ngrok_token:
+            logger.info("Configuring ngrok authtoken...")
+            subprocess.run(
+                [ngrok_exe, "config", "add-authtoken", ngrok_token],
+                capture_output=True, timeout=5
+            )
+
+    # Start ngrok
+    logger.info("Starting ngrok tunnel on port 5000...")
     ngrok_process = subprocess.Popen(
         [ngrok_exe, "http", "5000"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
-    # Wait up to 10s for tunnel
-    for _ in range(10):
+    # Wait up to 12s for tunnel
+    for i in range(12):
         await asyncio.sleep(1)
         url = _get_ngrok_url()
         if url:
@@ -290,7 +304,16 @@ async def start_ngrok_service():
             with open(CONFIG_PATH, "w") as f:
                 config.write(f)
             await manager.broadcast({"event": "ngrok_ready", "url": url, "ts": datetime.utcnow().isoformat()})
+            logger.info("Ngrok tunnel ready: %s", url)
             return {"ok": True, "url": url}
+        logger.info("Waiting for ngrok tunnel... (%d/12)", i + 1)
+
+    # Check if ngrok process died immediately
+    if ngrok_process.poll() is not None:
+        return {
+            "ok": False,
+            "error": "Ngrok exited immediately. It needs an authtoken. Add ngrok_authtoken = YOUR_TOKEN to config.ini [system] section."
+        }
 
     return {"ok": False, "error": "Ngrok started but tunnel not ready. Check http://localhost:4040"}
 
@@ -324,6 +347,7 @@ async def get_config():
         },
         "system": {
             "wsl_sudo_password": config["system"].get("wsl_sudo_password", "8898") if config.has_section("system") else "8898",
+            "ngrok_authtoken": config["system"].get("ngrok_authtoken", "") if config.has_section("system") else "",
         },
     }
 
@@ -362,6 +386,8 @@ async def save_config(request: Request):
         s = body["system"]
         if s.get("wsl_sudo_password"):
             config["system"]["wsl_sudo_password"] = s["wsl_sudo_password"]
+        if s.get("ngrok_authtoken") is not None:
+            config["system"]["ngrok_authtoken"] = s["ngrok_authtoken"]
 
     with open(CONFIG_PATH, "w") as f:
         config.write(f)
