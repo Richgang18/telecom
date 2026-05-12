@@ -63,6 +63,22 @@ def setup_logging(config: configparser.ConfigParser) -> None:
 # ---------------------------------------------------------------------------
 
 
+def normalize_phone(phone: str) -> str:
+    """Normalize phone number to E.164 format (+1XXXXXXXXXX for US numbers)."""
+    # Strip everything except digits and leading +
+    digits = "".join(c for c in phone if c.isdigit())
+    if phone.strip().startswith("+"):
+        return "+" + digits
+    # US number: 10 digits → add +1
+    if len(digits) == 10:
+        return f"+1{digits}"
+    # Already has country code: 11 digits starting with 1
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    # Return as-is with + prefix
+    return f"+{digits}"
+
+
 def load_contacts(csv_path: Path) -> list[dict[str, str]]:
     """
     Load contacts from a CSV file.
@@ -102,6 +118,7 @@ def load_contacts(csv_path: Path) -> list[dict[str, str]]:
             name = row.get("name", "").strip()
             phone = row.get("phone_number", "").strip()
             if phone:
+                phone = normalize_phone(phone)
                 contacts.append({"name": name, "phone": phone})
 
     if not contacts:

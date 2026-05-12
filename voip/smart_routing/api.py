@@ -127,6 +127,8 @@ async def connect_call(request: Request):
         await manager.broadcast({"event": "amd_machine", "call_sid": call_sid, "ts": datetime.utcnow().isoformat()})
         return Response(content=generate_no_answer_twiml(config), media_type="text/xml")
 
+    # Always reload config so latest mobile numbers / settings are used
+    _reload_config()
     agent_mode = config["agents"].get("agent_mode", "softphone")
 
     if agent_mode == "mobile":
@@ -140,6 +142,8 @@ async def connect_call(request: Request):
         timeout = int(config["agents"].get("agent_timeout", "20"))
         router.mark_busy_by_index(agent_index, call_sid)
         webhook_base = config["twilio"]["webhook_base_url"].rstrip("/")
+
+        logger.info("Bridging call %s to mobile agent %d: %s", call_sid, agent_index, mobile)
 
         twiml = (
             f'<?xml version="1.0" encoding="UTF-8"?><Response>'
