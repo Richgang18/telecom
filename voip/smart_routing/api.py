@@ -369,9 +369,50 @@ async def save_config(request: Request):
     return {"ok": True}
 
 
+@app.get("/api/contacts")
+async def get_contacts():
+    """Return contacts currently saved on disk."""
+    csv_path = BASE_DIR / config["dialer"].get("contact_list", "contacts.csv")
+    if not csv_path.exists():
+        return {"contacts": [], "total": 0}
+    import csv as csv_mod
+    contacts = []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv_mod.DictReader(f)
+        for row in reader:
+            name  = row.get("name", "").strip()
+            phone = row.get("phone_number", "").strip()
+            if phone:
+                contacts.append({"name": name, "phone": phone})
+    return {"contacts": contacts[:200], "total": len(contacts)}
+
+
+@app.post("/api/contacts/upload")
+async def upload_contacts(request: Request):
+    """
+    Receive contacts JSON from the UI and write them to contacts.csv on disk.
+    The dialer reads from this file when a campaign starts.
+    """
+    body = await request.json()
+    contacts = body.get("contacts", [])
+    if not contacts:
+        return JSONResponse({"ok": False, "error": "No contacts provided"}, status_code=400)
+
+    csv_path = BASE_DIR / config["dialer"].get("contact_list", "contacts.csv")
+    import csv as csv_mod
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv_mod.DictWriter(f, fieldnames=["name", "phone_number"])
+        writer.writeheader()
+        for c in contacts:
+            writer.writerow({"name": c.get("name", ""), "phone_number": c.get("phone", "")})
+
+    logger.info("Contacts uploaded: %d records saved to %s", len(contacts), csv_path)
+    await manager.broadcast({"event": "log", "msg": f"Contacts saved: {len(contacts)} records", "ts": datetime.utcnow().isoformat()})
+    return {"ok": True, "total": len(contacts)}
+
+
 @app.post("/api/dialer/start")
-async def start_dialer():
-    global dialer_process
+async def start_dialer():    global dialer_process
     if dialer_process and dialer_process.poll() is None:
         return {"ok": False, "error": "Dialer already running"}
 
