@@ -412,7 +412,8 @@ async def upload_contacts(request: Request):
 
 
 @app.post("/api/dialer/start")
-async def start_dialer():    global dialer_process
+async def start_dialer():
+    global dialer_process
     if dialer_process and dialer_process.poll() is None:
         return {"ok": False, "error": "Dialer already running"}
 
