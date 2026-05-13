@@ -52,6 +52,14 @@ export default function WsProvider({ children }: { children: React.ReactNode }) 
         incStat("answered");
         break;
       }
+      case "voicemail_dropped": {
+        incStat("voicemail");
+        break;
+      }
+      case "inbound_callback": {
+        addLog({ id: uid(), ...data });
+        break;
+      }
       case "agent_available": {
         const agentId = String(data.agent);
         updateAgent(agentId, { status: "available", call_sid: null });

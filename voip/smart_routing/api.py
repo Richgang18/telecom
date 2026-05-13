@@ -245,6 +245,25 @@ async def connect_call(request: Request):
         agent_mode = config["agents"].get("agent_mode", "softphone")
         logger.info("Agent mode: %s", agent_mode)
 
+        # ── Voicemail blast mode — play MP3 to everyone, no live agent ──
+        if agent_mode == "voicemail_blast":
+            webhook_base = config["twilio"].get("webhook_base_url", "").rstrip("/")
+            logger.info("Voicemail blast: playing voicemail to call %s", call_sid)
+            twiml = (
+                f'<?xml version="1.0" encoding="UTF-8"?>'
+                f'<Response>'
+                f'<Pause length="1"/>'
+                f'<Play>{webhook_base}/voicemail-audio</Play>'
+                f'<Hangup/>'
+                f'</Response>'
+            )
+            await manager.broadcast({
+                "event": "voicemail_dropped",
+                "call_sid": call_sid,
+                "ts": datetime.utcnow().isoformat()
+            })
+            return Response(content=twiml, media_type="text/xml")
+
         if agent_mode == "mobile":
             agent_index = router.get_available_agent_index()
             logger.info("Available agent index: %s", agent_index)
@@ -409,6 +428,53 @@ async def connect_call(request: Request):
             "agent": ext, "ts": datetime.utcnow().isoformat()
         })
         return Response(content=twiml, media_type="text/xml")
+
+
+@app.post("/inbound")
+async def inbound_call(request: Request):
+    """
+    Handle inbound calls — when a lead calls back after hearing the voicemail.
+    Forwards the call to the first available agent mobile number.
+    """
+    form = await request.form()
+    call_sid = form.get("CallSid", "unknown")
+    from_number = form.get("From", "unknown")
+    logger.info("Inbound callback: SID=%s from=%s", call_sid, from_number)
+
+    _reload_config()
+    mobile_numbers_raw = config["agents"].get("agent_mobile_numbers", "")
+    mobile_numbers = [n.strip() for n in mobile_numbers_raw.split(",") if n.strip()]
+    agent_timeout = int(config["agents"].get("agent_timeout", "20"))
+
+    if not mobile_numbers:
+        logger.error("No agent mobile numbers configured for inbound callback")
+        twiml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Response><Say>Sorry, no agents are available. Please try again later.</Say><Hangup/></Response>'
+        )
+        return Response(content=twiml, media_type="text/xml")
+
+    # Dial all agent numbers simultaneously — first to answer gets the call
+    dial_numbers = "".join(f"<Number>{n}</Number>" for n in mobile_numbers)
+    twiml = (
+        f'<?xml version="1.0" encoding="UTF-8"?>'
+        f'<Response>'
+        f'<Say voice="alice">Please hold while we connect you to an agent.</Say>'
+        f'<Dial timeout="{agent_timeout}" answerOnBridge="true">'
+        f'{dial_numbers}'
+        f'</Dial>'
+        f'<Say voice="alice">Sorry, no agents are available right now. Please call back later.</Say>'
+        f'</Response>'
+    )
+
+    await manager.broadcast({
+        "event": "inbound_callback",
+        "call_sid": call_sid,
+        "from": from_number,
+        "ts": datetime.utcnow().isoformat()
+    })
+    logger.info("Inbound callback from %s — forwarding to agents: %s", from_number, mobile_numbers)
+    return Response(content=twiml, media_type="text/xml")
 
 
 @app.post("/no-answer")
