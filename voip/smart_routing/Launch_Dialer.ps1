@@ -173,7 +173,7 @@ if ($ngrokExe) {
     Start-Sleep -Milliseconds 500
 
     $script:ngrokProc = Start-Process $ngrokExe `
-        -ArgumentList "http", "5000" `
+        -ArgumentList "http", "5000", "--request-header-add", "ngrok-skip-browser-warning:true" `
         -WindowStyle Hidden `
         -PassThru
     $childPids.Add($script:ngrokProc.Id)

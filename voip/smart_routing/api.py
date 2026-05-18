@@ -682,10 +682,24 @@ async def start_ngrok_service():
                 capture_output=True, timeout=5
             )
 
-    # Start ngrok
+    # Start ngrok with config file to bypass browser warning
     logger.info("Starting ngrok tunnel on port 5000...")
+    ngrok_args = [ngrok_exe, "http", "5000", "--request-header-add", "ngrok-skip-browser-warning:true"]
+
+    # Use config file if it exists
+    ngrok_config = BASE_DIR / "ngrok.yml"
+    if ngrok_config.exists():
+        # Update authtoken in config file first
+        if config.has_section("system"):
+            token = config["system"].get("ngrok_authtoken", "").strip()
+            if token:
+                content = ngrok_config.read_text()
+                content = content.replace("YOUR_NGROK_TOKEN_HERE", token)
+                ngrok_config.write_text(content)
+        ngrok_args = [ngrok_exe, "start", "smart-dialer", "--config", str(ngrok_config)]
+
     ngrok_process = subprocess.Popen(
-        [ngrok_exe, "http", "5000"],
+        ngrok_args,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
