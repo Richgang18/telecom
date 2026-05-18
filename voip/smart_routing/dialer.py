@@ -213,12 +213,16 @@ class SmartDialer:
         }
 
         if agent_mode == "voicemail_blast":
-            # Voicemail blast: detect answering machine, wait for beep, then play MP3
-            # DetectMessageEnd = waits for the beep before firing the callback
+            # Voicemail blast: use async AMD
+            # /connect fires immediately on answer, AMD result comes separately
+            # We play voicemail regardless of human or machine
             call_params["machine_detection"] = "DetectMessageEnd"
             call_params["machine_detection_timeout"] = amd_timeout
-            # Both human AND machine answers go to /connect which plays the voicemail
-            call_params["async_amd"] = "false"  # Synchronous — wait for detection before /connect
+            call_params["async_amd"] = "true"
+            call_params["async_amd_status_callback"] = f"{self.webhook_base}/connect"
+            call_params["async_amd_status_callback_method"] = "POST"
+            # Also fire /connect immediately on answer (before AMD completes)
+            # This ensures voicemail plays even if AMD is slow
         elif enable_amd:
             # Live agent mode with async AMD
             call_params["machine_detection"] = "DetectMessageEnd"

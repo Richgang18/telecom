@@ -245,9 +245,20 @@ async def connect_call(request: Request):
             webhook_base = config["twilio"].get("webhook_base_url", "").rstrip("/")
             logger.info("Voicemail blast: playing voicemail to call %s (answered_by=%s)", call_sid, answered_by)
 
-            # For machine_end answers, Twilio has already detected the beep
-            # For human answers, add a short pause so they hear the message
-            pause = '1' if answered_by in ("human", "unknown") else '0'
+            # Play voicemail for ALL answer types:
+            # - human / unknown = person answered, play message directly
+            # - machine_end_beep = voicemail beep detected, play after beep
+            # - machine_end_silence / machine_end_other = play anyway
+            if answered_by == "machine_start":
+                # AMD still detecting — wait, don't play yet (async callback will fire again)
+                logger.info("AMD still detecting for call %s — waiting for machine_end callback", call_sid)
+                return Response(
+                    content='<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="30"/></Response>',
+                    media_type="text/xml"
+                )
+
+            # For human answers add 1s pause, for machine answers no pause (beep already happened)
+            pause = "1" if answered_by in ("human", "unknown") else "0"
 
             twiml = (
                 f'<?xml version="1.0" encoding="UTF-8"?>'
@@ -257,6 +268,7 @@ async def connect_call(request: Request):
                 f'<Hangup/>'
                 f'</Response>'
             )
+            logger.info("Voicemail TwiML: %s", twiml)
             try:
                 await manager.broadcast({
                     "event": "voicemail_dropped",
