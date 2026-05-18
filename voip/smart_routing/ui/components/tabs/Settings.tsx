@@ -95,20 +95,44 @@ export default function Settings() {
             value={cfg.agents.mode}
             onChange={(e) => update("agents", "mode", e.target.value)}
           >
-            <option value="mobile">Mobile (calls your cellphone)</option>
+            <option value="voicemail_blast">Voicemail Blast (drop voicemail, no live agent)</option>
+            <option value="mobile">Mobile (bridge call to agent cellphone)</option>
             <option value="softphone">Softphone (SIP extension)</option>
           </select>
+          <div style={{ fontSize: 10, color: "#636e72", marginTop: 6 }}>
+            {cfg.agents.mode === "voicemail_blast" && "System dials leads, plays voicemail.mp3, hangs up. Cheapest option (~$0.013/min)."}
+            {cfg.agents.mode === "mobile" && "When lead answers, system calls agent mobile. Lead + agent bridged together (~$0.026/min)."}
+            {cfg.agents.mode === "softphone" && "When lead answers, system connects to SIP extension via Asterisk."}
+          </div>
         </div>
 
-        {cfg.agents.mode === "mobile" ? (
+        {cfg.agents.mode === "voicemail_blast" ? (
+          <>
+            <Field
+              label="Agent Mobile Numbers — for callbacks (comma-separated E.164)"
+              value={cfg.agents.mobile_numbers}
+              onChange={(v) => update("agents", "mobile_numbers", v)}
+              placeholder="+14145551234,+14145555678"
+            />
+            <Field
+              label="Agent Names (comma-separated)"
+              value={cfg.agents.names}
+              onChange={(v) => update("agents", "names", v)}
+              placeholder="Agent 1,Agent 2"
+            />
+            <div style={{ fontSize: 10, color: "#fdcb6e", background: "rgba(253,203,110,0.08)", border: "1px solid rgba(253,203,110,0.2)", borderRadius: 4, padding: "8px 10px" }}>
+              Make sure voicemail.mp3 is in the Smart Dialer folder. Also configure the Twilio inbound webhook to point to your ngrok URL + /inbound so callbacks reach agents.
+            </div>
+          </>
+        ) : cfg.agents.mode === "mobile" ? (
           <>
             <Field label="Mobile Numbers (comma-separated E.164)" value={cfg.agents.mobile_numbers} onChange={(v) => update("agents", "mobile_numbers", v)} placeholder="+14145551234,+14145555678" />
             <Field label="Agent Names (comma-separated)"          value={cfg.agents.names}          onChange={(v) => update("agents", "names", v)} placeholder="Agent 1,Agent 2" />
           </>
         ) : (
           <>
-            <Field label="SIP Extensions (comma-separated)" value={cfg.agents.extensions}    onChange={(v) => update("agents", "extensions", v)} placeholder="101,102" />
-            <Field label="Agent Names (comma-separated)"    value={cfg.agents.names}          onChange={(v) => update("agents", "names", v)} placeholder="Agent 1,Agent 2" />
+            <Field label="SIP Extensions (comma-separated)" value={cfg.agents.extensions} onChange={(v) => update("agents", "extensions", v)} placeholder="101,102" />
+            <Field label="Agent Names (comma-separated)"    value={cfg.agents.names}       onChange={(v) => update("agents", "names", v)} placeholder="Agent 1,Agent 2" />
           </>
         )}
 
