@@ -219,49 +219,53 @@ async def connect_call(request: Request):
     logger.info("/connect: SID=%s answered_by=%s call_status=%s", call_sid, answered_by, call_status)
 
     try:
-        # Machine detected — drop voicemail
-        if answered_by in ("machine_start", "machine_end", "machine_end_beep",
-                           "machine_end_silence", "machine_end_other", "fax"):
-            logger.info("AMD machine detected (%s) for call %s", answered_by, call_sid)
-            if call_sid in connected_calls:
-                logger.info("Call %s already bridged — ignoring AMD callback", call_sid)
-                return Response(
-                    content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
-                    media_type="text/xml"
-                )
-            await manager.broadcast({"event": "amd_machine", "call_sid": call_sid, "ts": datetime.utcnow().isoformat()})
-            return Response(content=generate_no_answer_twiml(config), media_type="text/xml")
-
-        # Already connected — ignore duplicate
-        if call_sid in connected_calls:
-            logger.info("Call %s already connected — ignoring duplicate /connect", call_sid)
-            return Response(
-                content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
-                media_type="text/xml"
-            )
-
-        # Reload config to get latest mobile number
+        # Machine detected in LIVE AGENT mode only — skip for voicemail_blast
         _reload_config()
         agent_mode = config["agents"].get("agent_mode", "softphone")
         logger.info("Agent mode: %s", agent_mode)
 
+        if agent_mode != "voicemail_blast" and answered_by in (
+            "machine_start", "machine_end", "machine_end_beep",
+            "machine_end_silence", "machine_end_other", "fax"
+        ):
+            logger.info("AMD machine detected (%s) for call %s — dropping voicemail", answered_by, call_sid)
+            if call_sid in connected_calls:
+                return Response(
+                    content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+                    media_type="text/xml"
+                )
+            try:
+                await manager.broadcast({"event": "amd_machine", "call_sid": call_sid, "ts": datetime.utcnow().isoformat()})
+            except Exception:
+                pass
+            return Response(content=generate_no_answer_twiml(config), media_type="text/xml")
+
         # ── Voicemail blast mode — play MP3 to everyone, no live agent ──
         if agent_mode == "voicemail_blast":
             webhook_base = config["twilio"].get("webhook_base_url", "").rstrip("/")
-            logger.info("Voicemail blast: playing voicemail to call %s", call_sid)
+            logger.info("Voicemail blast: playing voicemail to call %s (answered_by=%s)", call_sid, answered_by)
+
+            # For machine_end answers, Twilio has already detected the beep
+            # For human answers, add a short pause so they hear the message
+            pause = '1' if answered_by in ("human", "unknown") else '0'
+
             twiml = (
                 f'<?xml version="1.0" encoding="UTF-8"?>'
                 f'<Response>'
-                f'<Pause length="1"/>'
+                f'<Pause length="{pause}"/>'
                 f'<Play>{webhook_base}/voicemail-audio</Play>'
                 f'<Hangup/>'
                 f'</Response>'
             )
-            await manager.broadcast({
-                "event": "voicemail_dropped",
-                "call_sid": call_sid,
-                "ts": datetime.utcnow().isoformat()
-            })
+            try:
+                await manager.broadcast({
+                    "event": "voicemail_dropped",
+                    "call_sid": call_sid,
+                    "answered_by": answered_by,
+                    "ts": datetime.utcnow().isoformat()
+                })
+            except Exception:
+                pass
             return Response(content=twiml, media_type="text/xml")
 
         if agent_mode == "mobile":

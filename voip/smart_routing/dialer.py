@@ -193,11 +193,14 @@ class SmartDialer:
         # Always read the LATEST webhook URL from config (ngrok may have changed)
         self.config.read(CONFIG_PATH)
         self.webhook_base = self.config["twilio"]["webhook_base_url"].rstrip("/")
+        agent_mode = self.config["agents"].get("agent_mode", "mobile")
 
-        # Get AMD settings from config
+        # Get AMD settings
         enable_amd = self.config["agents"].getboolean("enable_amd", True)
         amd_timeout = int(self.config["agents"].get("amd_timeout", "30"))
-        
+
+        self.logger.info("Using webhook URL: %s | mode: %s", self.webhook_base, agent_mode)
+
         # Build call parameters
         call_params = {
             "to": phone,
@@ -209,10 +212,15 @@ class SmartDialer:
             "timeout": self.ring_timeout,
         }
 
-        self.logger.info("Using webhook URL: %s", self.webhook_base)
-        
-        # Add AMD if enabled
-        if enable_amd:
+        if agent_mode == "voicemail_blast":
+            # Voicemail blast: detect answering machine, wait for beep, then play MP3
+            # DetectMessageEnd = waits for the beep before firing the callback
+            call_params["machine_detection"] = "DetectMessageEnd"
+            call_params["machine_detection_timeout"] = amd_timeout
+            # Both human AND machine answers go to /connect which plays the voicemail
+            call_params["async_amd"] = "false"  # Synchronous — wait for detection before /connect
+        elif enable_amd:
+            # Live agent mode with async AMD
             call_params["machine_detection"] = "DetectMessageEnd"
             call_params["machine_detection_timeout"] = amd_timeout
             call_params["async_amd"] = "true"
