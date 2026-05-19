@@ -153,6 +153,10 @@ export default function Settings() {
         </div>
       </Section>
 
+      <Section title="Voicemail">
+        <VoicemailUploader />
+      </Section>
+
       <Section title="Dialer">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <Field label="Ring Timeout (s)" value={cfg.dialer.ring_timeout} onChange={(v) => update("dialer", "ring_timeout", v)} />
@@ -222,6 +226,112 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
       />
+    </div>
+  );
+}
+
+function VoicemailUploader() {
+  const [status, setStatus] = useState<"idle" | "uploading" | "ok" | "error">("idle");
+  const [msg, setMsg] = useState("");
+  const [vmUrl, setVmUrl] = useState("");
+
+  // Load current voicemail info
+  const checkVoicemail = async () => {
+    try {
+      const r = await fetch("http://localhost:5000/ping");
+      const d = await r.json();
+      setVmUrl(d.voicemail_url || "");
+      if (d.voicemail_exists) {
+        setMsg(`Current file: voicemail.mp3 (${(d.voicemail_size_bytes / 1024).toFixed(1)} KB)`);
+        setStatus("ok");
+      } else {
+        setMsg("No voicemail.mp3 found — upload one below");
+        setStatus("error");
+      }
+    } catch {
+      setMsg("API not reachable");
+      setStatus("error");
+    }
+  };
+
+  const handleUpload = async (file: File) => {
+    setStatus("uploading");
+    setMsg("Uploading...");
+    try {
+      const r = await fetch("http://localhost:5000/api/voicemail/upload", {
+        method: "POST",
+        headers: { "Content-Type": file.type || "audio/mpeg" },
+        body: file,
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setStatus("ok");
+        setMsg(`Uploaded successfully (${(d.size_bytes / 1024).toFixed(1)} KB)`);
+      } else {
+        setStatus("error");
+        setMsg(d.error || "Upload failed");
+      }
+    } catch (e) {
+      setStatus("error");
+      setMsg("Upload failed — API not reachable");
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ fontSize: 10, color: "#b2bec3", textTransform: "uppercase", letterSpacing: 0.5 }}>
+        Voicemail Recording (MP3 or WAV)
+      </div>
+
+      {/* Status */}
+      {msg && (
+        <div style={{
+          fontSize: 11,
+          color: status === "ok" ? "#00b894" : status === "error" ? "#d63031" : "#0984e3",
+          background: status === "ok" ? "rgba(0,184,148,0.08)" : status === "error" ? "rgba(214,48,49,0.08)" : "rgba(9,132,227,0.08)",
+          border: `1px solid ${status === "ok" ? "rgba(0,184,148,0.2)" : status === "error" ? "rgba(214,48,49,0.2)" : "rgba(9,132,227,0.2)"}`,
+          borderRadius: 4, padding: "6px 10px",
+        }}>
+          {msg}
+        </div>
+      )}
+
+      {/* Upload button */}
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          className="vici-btn vici-btn-blue"
+          onClick={() => document.getElementById("vm-upload")?.click()}
+          disabled={status === "uploading"}
+        >
+          {status === "uploading" ? "Uploading..." : "Upload voicemail.mp3"}
+        </button>
+        <button className="vici-btn vici-btn-ghost" onClick={checkVoicemail}>
+          Check Status
+        </button>
+        {vmUrl && (
+          <a
+            href={vmUrl}
+            target="_blank"
+            rel="noreferrer"
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "#0984e3", textDecoration: "none" }}
+          >
+            ▶ Test Audio
+          </a>
+        )}
+      </div>
+
+      <input
+        id="vm-upload"
+        type="file"
+        accept=".mp3,.wav,audio/*"
+        style={{ display: "none" }}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); e.target.value = ""; }}
+      />
+
+      <div style={{ fontSize: 10, color: "#636e72" }}>
+        Record your message and upload it here. The file will be played to leads when they answer.
+        Click "Test Audio" to verify it plays correctly via ngrok.
+      </div>
     </div>
   );
 }

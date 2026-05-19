@@ -180,6 +180,7 @@ async def ping():
     """Simple test endpoint — verify ngrok can reach the API."""
     live_url = _get_ngrok_url()
     _reload_config()
+    vm_file = BASE_DIR / config["voicemail"].get("voicemail_file", "voicemail.mp3")
     return {
         "status": "ok",
         "live_ngrok_url": live_url,
@@ -187,6 +188,10 @@ async def ping():
         "agent_mobile": config["agents"].get("agent_mobile_numbers", ""),
         "agent_mode": config["agents"].get("agent_mode", ""),
         "agents": router.status(),
+        "voicemail_file": str(vm_file),
+        "voicemail_exists": vm_file.exists(),
+        "voicemail_size_bytes": vm_file.stat().st_size if vm_file.exists() else 0,
+        "voicemail_url": f"{live_url}/voicemail-audio" if live_url else "ngrok not running",
     }
 
 
@@ -590,6 +595,22 @@ async def voicemail_audio():
         return JSONResponse({"error": "Voicemail file not found"}, status_code=404)
     mime, _ = mimetypes.guess_type(str(path))
     return FileResponse(str(path), media_type=mime or "audio/mpeg")
+
+
+@app.post("/api/voicemail/upload")
+async def upload_voicemail(request: Request):
+    """Upload a new voicemail.mp3 file."""
+    import shutil
+    content_type = request.headers.get("content-type", "")
+    body = await request.body()
+    if not body:
+        return JSONResponse({"ok": False, "error": "No file data received"}, status_code=400)
+    vm_path = BASE_DIR / "voicemail.mp3"
+    with open(vm_path, "wb") as f:
+        f.write(body)
+    size = vm_path.stat().st_size
+    logger.info("Voicemail uploaded: %d bytes", size)
+    return {"ok": True, "size_bytes": size, "path": str(vm_path)}
 
 
 # ---------------------------------------------------------------------------
