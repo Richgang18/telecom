@@ -3,19 +3,6 @@ dialer.py — Smart outbound dialer with agent-matched concurrency.
 
 Reads contacts from a CSV file and dials them via Twilio, limiting
 simultaneous calls to the number of available agents (max 2).
-
-Flow:
-  1. Load contacts from contacts.csv
-  2. Check available agent count (max_concurrent_calls from config)
-  3. Dial up to N contacts simultaneously (N = available agents)
-  4. Each answered call POSTs to /connect → agent_router bridges to agent
-  5. Each unanswered call POSTs to /no-answer → voicemail_drop plays message
-  6. When a call completes, agent is freed and next contact is dialed
-
-Usage:
-    python3 dialer.py                    # dial all contacts
-    python3 dialer.py --dry-run          # preview without dialing
-    python3 dialer.py --limit 10         # dial first 10 contacts only
 """
 
 from __future__ import annotations
@@ -59,51 +46,67 @@ def setup_logging(config: configparser.ConfigParser) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Contact loader
+# Phone normalization
 # ---------------------------------------------------------------------------
 
-
 def normalize_phone(phone: str) -> str:
-    """Normalize phone number to E.164 format (+1XXXXXXXXXX for US numbers)."""
-    # Strip everything except digits and leading +
+    """
+    Normalize any phone number format to E.164.
+
+    Handles:
+      +1-XXX-XXX-XXXX  → +1XXXXXXXXXX
+      (XXX) XXX-XXXX   → +1XXXXXXXXXX
+      XXX-XXX-XXXX     → +1XXXXXXXXXX
+      +91XXXXXXXXXX    → +91XXXXXXXXXX (international)
+      9876543210       → +919876543210 (10-digit Indian)
+    """
+    if not phone:
+        return ""
+
+    # Strip all non-digit characters except leading +
+    has_plus = phone.strip().startswith("+")
     digits = "".join(c for c in phone if c.isdigit())
-    if phone.strip().startswith("+"):
+
+    if not digits:
+        return ""
+
+    if has_plus:
+        # Already has country code
         return "+" + digits
-    # US number: 10 digits → add +1
+
+    # US number: 10 digits
     if len(digits) == 10:
         return f"+1{digits}"
-    # Already has country code: 11 digits starting with 1
+
+    # US number with country code: 11 digits starting with 1
     if len(digits) == 11 and digits.startswith("1"):
         return f"+{digits}"
-    # Return as-is with + prefix
+
+    # Indian number: 10 digits starting with 6-9
+    if len(digits) == 10 and digits[0] in "6789":
+        return f"+91{digits}"
+
+    # Indian number with country code: 12 digits starting with 91
+    if len(digits) == 12 and digits.startswith("91"):
+        return f"+{digits}"
+
+    # Fallback: prepend +
     return f"+{digits}"
 
+
+# ---------------------------------------------------------------------------
+# Contact loader — handles any CSV column naming convention
+# ---------------------------------------------------------------------------
 
 def load_contacts(csv_path: Path) -> list[dict[str, str]]:
     """
     Load contacts from a CSV file.
 
-    Expected CSV format (with or without header):
-        name,phone_number
-        John Smith,+14145551001
-        Jane Doe,+14145551002
+    Accepts any of these column names for phone:
+        phone_number, phone, Phone, mobile, cell, telephone, number
 
-    Parameters
-    ----------
-    csv_path:
-        Path to the contacts CSV file.
-
-    Returns
-    -------
-    list[dict]
-        List of {"name": str, "phone": str} dicts.
-
-    Raises
-    ------
-    FileNotFoundError
-        If the CSV file does not exist.
-    ValueError
-        If the CSV is empty or malformed.
+    Accepts any of these for name:
+        name, full_name, Firstname+Lastname, contact
     """
     if not csv_path.exists():
         raise FileNotFoundError(
@@ -112,17 +115,72 @@ def load_contacts(csv_path: Path) -> list[dict[str, str]]:
         )
 
     contacts: list[dict[str, str]] = []
-    with csv_path.open(newline="", encoding="utf-8") as fh:
+
+    with csv_path.open(newline="", encoding="utf-8-sig") as fh:
         reader = csv.DictReader(fh)
+
+        if not reader.fieldnames:
+            raise ValueError(f"CSV has no headers: {csv_path}")
+
+        # Map headers to lowercase for flexible matching
+        header_map = {h.strip().lower(): h for h in reader.fieldnames}
+
+        # Find phone column
+        phone_col = None
+        for candidate in ["phone_number", "phone", "mobile", "cell", "telephone", "number", "phonenumber"]:
+            if candidate in header_map:
+                phone_col = header_map[candidate]
+                break
+
+        if not phone_col:
+            raise ValueError(
+                f"No phone column found in {csv_path}.\n"
+                f"Expected one of: phone_number, phone, mobile, cell.\n"
+                f"Found columns: {list(reader.fieldnames)}"
+            )
+
+        # Find name column
+        name_col = None
+        for candidate in ["name", "full_name", "fullname", "contact"]:
+            if candidate in header_map:
+                name_col = header_map[candidate]
+                break
+
+        # Find first/last name columns
+        first_col = header_map.get("firstname") or header_map.get("first_name") or header_map.get("first")
+        last_col  = header_map.get("lastname")  or header_map.get("last_name")  or header_map.get("last")
+
+        skipped = 0
         for row in reader:
-            name = row.get("name", "").strip()
-            phone = row.get("phone_number", "").strip()
-            if phone:
-                phone = normalize_phone(phone)
-                contacts.append({"name": name, "phone": phone})
+            raw_phone = row.get(phone_col, "").strip()
+            if not raw_phone:
+                skipped += 1
+                continue
+
+            phone = normalize_phone(raw_phone)
+
+            # Skip invalid numbers (too short after normalization)
+            if len(phone) < 8:
+                skipped += 1
+                continue
+
+            # Build name
+            if name_col:
+                name = row.get(name_col, "").strip()
+            elif first_col:
+                first = row.get(first_col, "").strip()
+                last  = row.get(last_col, "").strip() if last_col else ""
+                name  = f"{first} {last}".strip()
+            else:
+                name = "Unknown"
+
+            contacts.append({"name": name or "Unknown", "phone": phone})
+
+        if skipped:
+            logging.getLogger(__name__).warning("Skipped %d rows with missing/invalid phone numbers", skipped)
 
     if not contacts:
-        raise ValueError(f"No contacts found in {csv_path}")
+        raise ValueError(f"No valid contacts found in {csv_path}")
 
     return contacts
 
@@ -131,14 +189,8 @@ def load_contacts(csv_path: Path) -> list[dict[str, str]]:
 # Twilio dialer
 # ---------------------------------------------------------------------------
 
-
 class SmartDialer:
-    """
-    Outbound dialer that limits concurrent calls to available agent count.
-
-    Each call is initiated via Twilio's REST API. Twilio webhooks handle
-    call routing (connect to agent or drop voicemail).
-    """
+    """Outbound dialer that limits concurrent calls to available agent count."""
 
     def __init__(
         self,
@@ -164,25 +216,17 @@ class SmartDialer:
         self.batch_delay = float(dialer_cfg.get("batch_delay", "2"))
         self.max_concurrent = int(config["agents"].get("max_concurrent_calls", "2"))
 
-        # Track active call SIDs → contact info
         self._active_calls: dict[str, dict] = {}
 
     def dial_contact(self, contact: dict[str, str]) -> str | None:
-        """
-        Initiate a single outbound call to a contact.
+        """Initiate a single outbound call to a contact."""
+        phone = contact.get("phone", "").strip()
+        name  = contact.get("name", "Unknown").strip()
 
-        Parameters
-        ----------
-        contact:
-            Dict with "name" and "phone" keys.
-
-        Returns
-        -------
-        str | None
-            Twilio call SID on success, None on dry run.
-        """
-        phone = contact["phone"]
-        name = contact["name"]
+        # Skip invalid numbers
+        if not phone or len(phone) < 8:
+            self.logger.warning("Skipping invalid phone for %s: '%s'", name, phone)
+            return None
 
         if self.dry_run:
             self.logger.info("[DRY RUN] Would dial %s (%s)", name, phone)
@@ -190,18 +234,15 @@ class SmartDialer:
 
         self.logger.info("Dialing %s (%s)...", name, phone)
 
-        # Always read the LATEST webhook URL from config (ngrok may have changed)
+        # Always reload latest webhook URL (ngrok may have changed)
         self.config.read(CONFIG_PATH)
         self.webhook_base = self.config["twilio"]["webhook_base_url"].rstrip("/")
         agent_mode = self.config["agents"].get("agent_mode", "mobile")
-
-        # Get AMD settings
         enable_amd = self.config["agents"].getboolean("enable_amd", True)
         amd_timeout = int(self.config["agents"].get("amd_timeout", "30"))
 
         self.logger.info("Using webhook URL: %s | mode: %s", self.webhook_base, agent_mode)
 
-        # Build call parameters
         call_params = {
             "to": phone,
             "from_": self.from_number,
@@ -213,43 +254,31 @@ class SmartDialer:
         }
 
         if agent_mode == "voicemail_blast":
-            # Voicemail blast: use async AMD
-            # /connect fires immediately on answer, AMD result comes separately
-            # We play voicemail regardless of human or machine
             call_params["machine_detection"] = "DetectMessageEnd"
             call_params["machine_detection_timeout"] = amd_timeout
             call_params["async_amd"] = "true"
             call_params["async_amd_status_callback"] = f"{self.webhook_base}/connect"
             call_params["async_amd_status_callback_method"] = "POST"
-            # Also fire /connect immediately on answer (before AMD completes)
-            # This ensures voicemail plays even if AMD is slow
         elif enable_amd:
-            # Live agent mode with async AMD
             call_params["machine_detection"] = "DetectMessageEnd"
             call_params["machine_detection_timeout"] = amd_timeout
             call_params["async_amd"] = "true"
             call_params["async_amd_status_callback"] = f"{self.webhook_base}/connect"
             call_params["async_amd_status_callback_method"] = "POST"
 
-        call = self.client.calls.create(**call_params)
-
-        self.logger.info(
-            "Call initiated: SID=%s to=%s name=%s AMD=%s",
-            call.sid, phone, name, "enabled" if enable_amd else "disabled",
-        )
-        return call.sid
+        try:
+            call = self.client.calls.create(**call_params)
+            self.logger.info(
+                "Call initiated: SID=%s to=%s name=%s AMD=%s",
+                call.sid, phone, name, "enabled" if (enable_amd or agent_mode == "voicemail_blast") else "disabled",
+            )
+            return call.sid
+        except Exception as e:
+            self.logger.error("Failed to dial %s (%s): %s", name, phone, e)
+            return None
 
     def run(self, contacts: list[dict[str, str]], limit: int | None = None) -> None:
-        """
-        Dial all contacts, respecting agent availability.
-
-        Parameters
-        ----------
-        contacts:
-            List of contact dicts from load_contacts().
-        limit:
-            Optional max number of contacts to dial.
-        """
+        """Dial all contacts, respecting agent availability."""
         if limit:
             contacts = contacts[:limit]
 
@@ -259,27 +288,21 @@ class SmartDialer:
             total, self.max_concurrent,
         )
 
-        dialed = 0
         index = 0
+        dialed = 0
 
         while index < total:
             available = self.router.available_count()
 
             if available == 0:
-                self.logger.info(
-                    "⏸️  All %d agents busy — pausing dialer until one becomes available...",
-                    self.max_concurrent
-                )
-                # Wait for an agent to become available (with 60 second timeout as safety)
+                self.logger.info("All agents busy — waiting...")
                 if self.router.wait_for_available_agent(timeout=60):
-                    self.logger.info("✅ Agent available — resuming dialing")
+                    self.logger.info("Agent available — resuming")
                     continue
                 else:
-                    # Timeout occurred, check again
-                    self.logger.warning("⚠️  Timeout waiting for agent — checking status...")
+                    self.logger.warning("Timeout waiting for agent — checking status...")
                     continue
 
-            # Dial up to available agent count
             batch_size = min(available, total - index)
             self.logger.info(
                 "Batch: dialing %d contact(s) (%d/%d total) — %d agents available",
@@ -296,47 +319,26 @@ class SmartDialer:
                 index += 1
                 dialed += 1
 
-            # Small delay between batches to avoid overwhelming Twilio API
             time.sleep(self.batch_delay)
 
-        self.logger.info(
-            "Dialing complete. Total dialed: %d/%d", dialed, total
-        )
+        self.logger.info("Dialing complete. Total dialed: %d/%d", dialed, total)
 
 
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
-
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Smart outbound dialer — dials contacts matched to agent availability"
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Preview contacts without making real calls",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help="Maximum number of contacts to dial",
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        default=str(CONFIG_PATH),
-        help="Path to config.ini (default: ./config.ini)",
-    )
+    parser = argparse.ArgumentParser(description="Smart outbound dialer")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--config", type=str, default=str(CONFIG_PATH))
     args = parser.parse_args()
 
     config = load_config()
     setup_logging(config)
     logger = logging.getLogger(__name__)
 
-    # Load contacts
     contact_csv = (
         Path(__file__).parent
         / config["dialer"].get("contact_list", "contacts.csv")
@@ -344,10 +346,7 @@ def main() -> None:
     contacts = load_contacts(contact_csv)
     logger.info("Loaded %d contacts from %s", len(contacts), contact_csv)
 
-    # Initialise agent router
     router = AgentRouter(config)
-
-    # Run dialer
     dialer = SmartDialer(config, router, dry_run=args.dry_run)
     dialer.run(contacts, limit=args.limit)
 
