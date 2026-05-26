@@ -770,8 +770,9 @@ async def get_config():
             "extensions": config["agents"].get("agent_extensions", "101,102"),
         },
         "dialer": {
-            "ring_timeout": config["dialer"].get("ring_timeout", "20"),
-            "batch_delay": config["dialer"].get("batch_delay", "2"),
+            "ring_timeout":    config["dialer"].get("ring_timeout", "20"),
+            "batch_delay":     config["dialer"].get("batch_delay", "1"),
+            "concurrent_calls": config["dialer"].get("concurrent_calls", "5"),
         },
         "voicemail": {
             "file": config["voicemail"].get("voicemail_file", "voicemail.mp3"),
@@ -808,8 +809,9 @@ async def save_config(request: Request):
 
     if "dialer" in body:
         d = body["dialer"]
-        if d.get("ring_timeout"): config["dialer"]["ring_timeout"] = str(d["ring_timeout"])
-        if d.get("batch_delay"): config["dialer"]["batch_delay"] = str(d["batch_delay"])
+        if d.get("ring_timeout"):    config["dialer"]["ring_timeout"]    = str(d["ring_timeout"])
+        if d.get("batch_delay"):     config["dialer"]["batch_delay"]     = str(d["batch_delay"])
+        if d.get("concurrent_calls"): config["dialer"]["concurrent_calls"] = str(d["concurrent_calls"])
 
     if "system" in body:
         if not config.has_section("system"):
