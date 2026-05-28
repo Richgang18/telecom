@@ -3,7 +3,7 @@ import { useDialerStore } from "@/lib/store";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { Download, ChevronLeft, RefreshCw } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
-import * as XLSX from "xlsx";
+// xlsx loaded dynamically to avoid workspace root resolution issues
 
 const BASE = "http://localhost:5000";
 
@@ -193,7 +193,8 @@ function CampaignDetailView({
   campaign: CampaignDetail;
   onBack: () => void;
 }) {
-  const exportXLSX = () => {
+  const exportXLSX = async () => {
+    const XLSX = await import("xlsx");
     const rows = campaign.calls.map((c) => ({
       Name: c.name,
       Phone: c.phone,
