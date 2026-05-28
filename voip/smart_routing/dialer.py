@@ -1,11 +1,13 @@
 """
 dialer.py — Smart outbound dialer with concurrent calling support.
 
+Supports two providers:
+  - Twilio (default)
+  - SignalWire (drop-in compatible, 60% cheaper)
+
 Supports two dialing modes:
-  - agent_mode = mobile/softphone: dials up to max_concurrent_calls at once,
-    limited by available agents
-  - agent_mode = voicemail_blast: dials up to concurrent_calls at once,
-    no agent limit (voicemail drops to everyone simultaneously)
+  - voicemail_blast: dials N numbers simultaneously, plays voicemail.mp3
+  - mobile/softphone: dials up to available agent count simultaneously
 """
 
 from __future__ import annotations
@@ -88,7 +90,7 @@ def normalize_phone(phone: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Contact loader — handles any CSV column naming convention
+# Contact loader
 # ---------------------------------------------------------------------------
 
 def load_contacts(csv_path: Path) -> list[dict[str, str]]:
@@ -167,15 +169,25 @@ def load_contacts(csv_path: Path) -> list[dict[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# Provider factory — Twilio or SignalWire
+# ---------------------------------------------------------------------------
+
+def build_client(config: configparser.ConfigParser) -> Client:
+    """Build Twilio client (used when SignalWire is not configured)."""
+    twilio_cfg = config["twilio"]
+    return Client(twilio_cfg["account_sid"], twilio_cfg["auth_token"])
+
+
+# ---------------------------------------------------------------------------
 # Twilio dialer
 # ---------------------------------------------------------------------------
 
 class SmartDialer:
     """
-    Outbound dialer with concurrent calling support.
+    Outbound dialer with concurrent calling and multi-provider support.
 
-    In voicemail_blast mode: dials `concurrent_calls` numbers simultaneously.
-    In mobile/softphone mode: dials up to available agent count simultaneously.
+    Providers: Twilio (default) or SignalWire (60% cheaper, drop-in compatible)
+    Modes: voicemail_blast (N simultaneous) or mobile/softphone (agent-limited)
     """
 
     def __init__(
@@ -190,19 +202,32 @@ class SmartDialer:
         self.logger = logging.getLogger(__name__)
 
         twilio_cfg = config["twilio"]
-        self.client = Client(
-            twilio_cfg["account_sid"],
-            twilio_cfg["auth_token"],
-        )
-        self.from_number = twilio_cfg["from_number"]
+        self.account_sid  = twilio_cfg["account_sid"]
+        self.auth_token   = twilio_cfg["auth_token"]
+        self.from_number  = twilio_cfg["from_number"]
         self.webhook_base = twilio_cfg["webhook_base_url"].rstrip("/")
 
-        dialer_cfg = config["dialer"]
-        self.ring_timeout  = int(dialer_cfg.get("ring_timeout", "20"))
-        self.batch_delay   = float(dialer_cfg.get("batch_delay", "1"))
-        self.max_concurrent = int(config["agents"].get("max_concurrent_calls", "2"))
+        # Detect provider
+        self.use_signalwire = (
+            config.has_section("signalwire") and
+            bool(config["signalwire"].get("space_url", "").strip())
+        )
+        if self.use_signalwire:
+            space_url = config["signalwire"]["space_url"].strip()
+            if not space_url.startswith("http"):
+                space_url = f"https://{space_url}"
+            self.sw_base_url = f"{space_url.rstrip('/')}/api/laml/2010-04-01"
+            self.provider = "SignalWire"
+            self.logger.info("Provider: SignalWire (%s)", self.sw_base_url)
+        else:
+            self.client = Client(self.account_sid, self.auth_token)
+            self.provider = "Twilio"
+            self.logger.info("Provider: Twilio")
 
-        # Concurrent calls for voicemail_blast mode (independent of agents)
+        dialer_cfg = config["dialer"]
+        self.ring_timeout     = int(dialer_cfg.get("ring_timeout", "20"))
+        self.batch_delay      = float(dialer_cfg.get("batch_delay", "1"))
+        self.max_concurrent   = int(config["agents"].get("max_concurrent_calls", "2"))
         self.concurrent_calls = int(dialer_cfg.get("concurrent_calls", "5"))
 
         self._active_calls: dict[str, dict] = {}
@@ -221,14 +246,14 @@ class SmartDialer:
             self.logger.info("[DRY RUN] Would dial %s (%s)", name, phone)
             return None
 
-        # Reload latest config (ngrok URL may have changed)
+        # Reload latest config
         cfg = load_config()
         webhook_base = cfg["twilio"]["webhook_base_url"].rstrip("/")
         agent_mode   = cfg["agents"].get("agent_mode", "mobile")
         enable_amd   = cfg["agents"].getboolean("enable_amd", True)
         amd_timeout  = int(cfg["agents"].get("amd_timeout", "30"))
 
-        self.logger.info("Dialing %s (%s)...", name, phone)
+        self.logger.info("Dialing %s (%s) via %s | mode=%s", name, phone, self.provider, agent_mode)
 
         call_params = {
             "to": phone,
@@ -248,28 +273,59 @@ class SmartDialer:
             call_params["async_amd_status_callback_method"] = "POST"
 
         try:
-            call = self.client.calls.create(**call_params)
-            self.logger.info(
-                "Call initiated: SID=%s to=%s name=%s mode=%s",
-                call.sid, phone, name, agent_mode,
-            )
-            with self._lock:
-                self._active_calls[call.sid] = contact
-            return call.sid
+            if self.use_signalwire:
+                sid = self._call_via_signalwire(call_params)
+            else:
+                call = self.client.calls.create(**call_params)
+                sid = call.sid
+
+            if sid:
+                self.logger.info("Call initiated: SID=%s to=%s name=%s", sid, phone, name)
+                with self._lock:
+                    self._active_calls[sid] = contact
+            return sid
         except Exception as e:
             self.logger.error("Failed to dial %s (%s): %s", name, phone, e)
             return None
 
+    def _call_via_signalwire(self, call_params: dict) -> str | None:
+        """Make outbound call via SignalWire Compatibility REST API."""
+        import requests as req
+
+        url = f"{self.sw_base_url}/Accounts/{self.account_sid}/Calls.json"
+
+        data: dict = {
+            "To":                   call_params["to"],
+            "From":                 call_params["from_"],
+            "Url":                  call_params["url"],
+            "StatusCallback":       call_params.get("status_callback", ""),
+            "StatusCallbackMethod": call_params.get("status_callback_method", "POST"),
+            "Timeout":              str(call_params.get("timeout", 20)),
+        }
+
+        for ev in call_params.get("status_callback_event", []):
+            data.setdefault("StatusCallbackEvent[]", [])
+            data["StatusCallbackEvent[]"].append(ev)  # type: ignore
+
+        if "machine_detection" in call_params:
+            data["MachineDetection"]             = call_params["machine_detection"]
+            data["MachineDetectionTimeout"]      = str(call_params.get("machine_detection_timeout", 30))
+            data["AsyncAmd"]                     = "true"
+            data["AsyncAmdStatusCallback"]       = call_params.get("async_amd_status_callback", "")
+            data["AsyncAmdStatusCallbackMethod"] = "POST"
+
+        resp = req.post(
+            url,
+            data=data,
+            auth=(self.account_sid, self.auth_token),
+            timeout=10,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        return result.get("sid") or result.get("Sid", "")
+
     def run(self, contacts: list[dict[str, str]], limit: int | None = None) -> None:
-        """
-        Dial all contacts with concurrent calling.
-
-        voicemail_blast mode: fires `concurrent_calls` calls simultaneously,
-        waits `batch_delay` seconds, then fires the next batch.
-
-        mobile/softphone mode: fires up to available agent count simultaneously,
-        waits for agents to become available before next batch.
-        """
+        """Dial all contacts with concurrent calling."""
         if limit:
             contacts = contacts[:limit]
 
@@ -291,8 +347,6 @@ class SmartDialer:
         dialed = 0
 
         while index < total:
-
-            # For live agent modes, wait for available agents
             if agent_mode != "voicemail_blast":
                 available = self.router.available_count()
                 if available == 0:
@@ -302,7 +356,6 @@ class SmartDialer:
                     continue
                 concurrency = min(available, self.max_concurrent)
 
-            # Build this batch
             batch = contacts[index: index + concurrency]
             if not batch:
                 break
@@ -312,7 +365,6 @@ class SmartDialer:
                 len(batch), index + len(batch), total,
             )
 
-            # Fire all calls in the batch concurrently using threads
             with ThreadPoolExecutor(max_workers=len(batch)) as executor:
                 futures = {executor.submit(self.dial_contact, c): c for c in batch}
                 for future in as_completed(futures):
@@ -322,7 +374,6 @@ class SmartDialer:
 
             index += len(batch)
 
-            # Small delay between batches to avoid Twilio rate limits
             if index < total:
                 time.sleep(self.batch_delay)
 

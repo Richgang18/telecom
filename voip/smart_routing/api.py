@@ -759,6 +759,9 @@ async def get_config():
             "from_number": config["twilio"].get("from_number", ""),
             "webhook_base_url": config["twilio"].get("webhook_base_url", ""),
         },
+        "signalwire": {
+            "space_url": config["signalwire"].get("space_url", "") if config.has_section("signalwire") else "",
+        },
         "agents": {
             "mode": config["agents"].get("agent_mode", "softphone"),
             "mobile_numbers": config["agents"].get("agent_mobile_numbers", ""),
@@ -770,8 +773,8 @@ async def get_config():
             "extensions": config["agents"].get("agent_extensions", "101,102"),
         },
         "dialer": {
-            "ring_timeout":    config["dialer"].get("ring_timeout", "20"),
-            "batch_delay":     config["dialer"].get("batch_delay", "1"),
+            "ring_timeout":     config["dialer"].get("ring_timeout", "20"),
+            "batch_delay":      config["dialer"].get("batch_delay", "1"),
             "concurrent_calls": config["dialer"].get("concurrent_calls", "5"),
         },
         "voicemail": {
@@ -779,7 +782,7 @@ async def get_config():
         },
         "system": {
             "wsl_sudo_password": config["system"].get("wsl_sudo_password", "8898") if config.has_section("system") else "8898",
-            "ngrok_authtoken": config["system"].get("ngrok_authtoken", "") if config.has_section("system") else "",
+            "ngrok_authtoken":   config["system"].get("ngrok_authtoken", "")   if config.has_section("system") else "",
         },
     }
 
@@ -796,6 +799,13 @@ async def save_config(request: Request):
             config["twilio"]["auth_token"] = t["auth_token"]
         if t.get("from_number"): config["twilio"]["from_number"] = t["from_number"]
         if t.get("webhook_base_url"): config["twilio"]["webhook_base_url"] = t["webhook_base_url"]
+
+    if "signalwire" in body:
+        if not config.has_section("signalwire"):
+            config.add_section("signalwire")
+        sw = body["signalwire"]
+        # space_url can be empty string (means use Twilio)
+        config["signalwire"]["space_url"] = sw.get("space_url", "").strip()
 
     if "agents" in body:
         a = body["agents"]
