@@ -98,6 +98,110 @@ agent_busy_since: dict[str, datetime] = {}
 # Track calls already connected to an agent (prevents double-bridging from async AMD)
 connected_calls: set[str] = set()
 
+# ---------------------------------------------------------------------------
+# Campaign tracking
+# ---------------------------------------------------------------------------
+CAMPAIGNS_DIR = BASE_DIR / "campaigns"
+CAMPAIGNS_DIR.mkdir(exist_ok=True)
+
+current_campaign: dict | None = None
+
+
+def _campaign_path(campaign_id: str) -> Path:
+    return CAMPAIGNS_DIR / f"{campaign_id}.json"
+
+
+def _save_campaign(campaign: dict) -> None:
+    """Persist campaign dict to disk as JSON."""
+    try:
+        with open(_campaign_path(campaign["id"]), "w", encoding="utf-8") as f:
+            json.dump(campaign, f, indent=2, default=str)
+    except Exception as e:
+        logger.error("Failed to save campaign %s: %s", campaign.get("id"), e)
+
+
+def _load_campaign(campaign_id: str) -> dict | None:
+    """Load a campaign from disk. Returns None if not found."""
+    path = _campaign_path(campaign_id)
+    if not path.exists():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error("Failed to load campaign %s: %s", campaign_id, e)
+        return None
+
+
+def _list_campaigns() -> list[dict]:
+    """Return summary list of all campaigns, newest first."""
+    summaries = []
+    for p in sorted(CAMPAIGNS_DIR.glob("*.json"), reverse=True):
+        try:
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
+            # Return summary without the full calls list
+            summaries.append({k: v for k, v in data.items() if k != "calls"})
+        except Exception:
+            pass
+    return summaries
+
+
+def _new_campaign(total_contacts: int) -> dict:
+    """Create a fresh campaign record."""
+    now = datetime.utcnow()
+    campaign_id = f"campaign_{now.strftime('%Y%m%d_%H%M%S')}"
+    return {
+        "id": campaign_id,
+        "started_at": now.isoformat(),
+        "ended_at": None,
+        "status": "running",
+        "total_contacts": total_contacts,
+        "dialed": 0,
+        "answered": 0,
+        "voicemail_dropped": 0,
+        "no_answer": 0,
+        "failed": 0,
+        "calls": [],
+    }
+
+
+def _update_campaign_call(
+    campaign: dict,
+    call_sid: str,
+    name: str,
+    phone: str,
+    status: str,
+    answered_by: str = "",
+    duration: int = 0,
+) -> None:
+    """Add or update a call entry in the campaign record."""
+    # Check if call already exists
+    for call in campaign["calls"]:
+        if call["call_sid"] == call_sid:
+            call["status"] = status
+            if answered_by:
+                call["answered_by"] = answered_by
+            if duration:
+                call["duration"] = duration
+            return
+    # New call entry
+    campaign["calls"].append({
+        "call_sid": call_sid,
+        "name": name,
+        "phone": phone,
+        "status": status,
+        "answered_by": answered_by,
+        "timestamp": datetime.utcnow().isoformat(),
+        "duration": duration,
+    })
+    campaign["dialed"] = len(campaign["calls"])
+    # Recount stats
+    campaign["answered"] = sum(1 for c in campaign["calls"] if c["status"] == "answered")
+    campaign["voicemail_dropped"] = sum(1 for c in campaign["calls"] if c["status"] == "voicemail_dropped")
+    campaign["no_answer"] = sum(1 for c in campaign["calls"] if c["status"] == "no_answer")
+    campaign["failed"] = sum(1 for c in campaign["calls"] if c["status"] == "failed")
+
 
 def _reload_config():
     """Reload config.ini values only. Does NOT reset the router/agent state."""
@@ -283,6 +387,17 @@ async def connect_call(request: Request):
                 })
             except Exception:
                 pass
+            # Record voicemail drop in campaign
+            if current_campaign is not None:
+                _update_campaign_call(
+                    current_campaign,
+                    call_sid=call_sid,
+                    name="",
+                    phone=form.get("To", ""),
+                    status="voicemail_dropped",
+                    answered_by=answered_by,
+                )
+                _save_campaign(current_campaign)
             return Response(content=twiml, media_type="text/xml")
 
         if agent_mode == "mobile":
@@ -552,11 +667,14 @@ async def call_status(request: Request):
     """
     form = await request.form()
     call_sid = form.get("CallSid", "unknown")
-    call_status = form.get("CallStatus", "unknown")
-    logger.info("Call status update: SID=%s status=%s", call_sid, call_status)
+    call_status_val = form.get("CallStatus", "unknown")
+    to_number = form.get("To", "")
+    call_duration = int(form.get("CallDuration", 0) or 0)
+    answered_by = form.get("AnsweredBy", "")
+    logger.info("Call status update: SID=%s status=%s", call_sid, call_status_val)
 
     # If call is terminal, make sure agent is freed
-    if call_status in ("completed", "failed", "busy", "no-answer", "canceled"):
+    if call_status_val in ("completed", "failed", "busy", "no-answer", "canceled"):
         # Clean up connected_calls tracking
         connected_calls.discard(call_sid)
 
@@ -568,20 +686,41 @@ async def call_status(request: Request):
                     router.mark_available_by_index(int(key))
                 except (ValueError, AttributeError):
                     router.mark_available(key)
-                logger.info("Safety release: agent %s freed after call %s (%s)", key, call_sid, call_status)
+                logger.info("Safety release: agent %s freed after call %s (%s)", key, call_sid, call_status_val)
                 await manager.broadcast({
                     "event": "agent_available",
                     "agent": key,
                     "call_sid": call_sid,
-                    "reason": f"safety_release_{call_status}",
+                    "reason": f"safety_release_{call_status_val}",
                     "ts": datetime.utcnow().isoformat()
                 })
                 break
 
+        # Update campaign record with terminal call status
+        if current_campaign is not None:
+            status_map = {
+                "completed": "answered",
+                "no-answer": "no_answer",
+                "busy": "no_answer",
+                "failed": "failed",
+                "canceled": "failed",
+            }
+            mapped_status = status_map.get(call_status_val, call_status_val)
+            _update_campaign_call(
+                current_campaign,
+                call_sid=call_sid,
+                name="",
+                phone=to_number,
+                status=mapped_status,
+                answered_by=answered_by,
+                duration=call_duration,
+            )
+            _save_campaign(current_campaign)
+
     await manager.broadcast({
         "event": "call_status",
         "call_sid": call_sid,
-        "status": call_status,
+        "status": call_status_val,
         "ts": datetime.utcnow().isoformat()
     })
     return Response(content="", status_code=204)
@@ -882,9 +1021,26 @@ async def upload_contacts(request: Request):
 
 @app.post("/api/dialer/start")
 async def start_dialer():
-    global dialer_process
+    global dialer_process, current_campaign
     if dialer_process and dialer_process.poll() is None:
         return {"ok": False, "error": "Dialer already running"}
+
+    # Count contacts for the campaign record
+    _reload_config()
+    total_contacts = 0
+    try:
+        import csv as csv_mod
+        csv_path = BASE_DIR / config["dialer"].get("contact_list", "contacts.csv")
+        if csv_path.exists():
+            with open(csv_path, newline="", encoding="utf-8") as f:
+                total_contacts = sum(1 for row in csv_mod.DictReader(f) if row.get("phone_number", "").strip())
+    except Exception:
+        pass
+
+    # Create and persist a new campaign record
+    current_campaign = _new_campaign(total_contacts)
+    _save_campaign(current_campaign)
+    logger.info("Campaign started: %s (%d contacts)", current_campaign["id"], total_contacts)
 
     dialer_script = BASE_DIR / "dialer.py"
     dialer_process = subprocess.Popen(
@@ -914,12 +1070,12 @@ async def start_dialer():
 
     threading.Thread(target=_stream, daemon=True).start()
     await manager.broadcast({"event": "dialer_started", "ts": datetime.utcnow().isoformat()})
-    return {"ok": True, "pid": dialer_process.pid}
+    return {"ok": True, "pid": dialer_process.pid, "campaign_id": current_campaign["id"]}
 
 
 @app.post("/api/dialer/stop")
 async def stop_dialer():
-    global dialer_process
+    global dialer_process, current_campaign
     if dialer_process and dialer_process.poll() is None:
         dialer_process.terminate()
         try:
@@ -927,6 +1083,15 @@ async def stop_dialer():
         except subprocess.TimeoutExpired:
             dialer_process.kill()
     dialer_process = None
+
+    # Finalize the campaign record
+    if current_campaign is not None:
+        current_campaign["ended_at"] = datetime.utcnow().isoformat()
+        current_campaign["status"] = "completed"
+        _save_campaign(current_campaign)
+        logger.info("Campaign finalized: %s", current_campaign["id"])
+        current_campaign = None
+
     await manager.broadcast({"event": "dialer_stopped", "ts": datetime.utcnow().isoformat()})
     return {"ok": True}
 
@@ -946,6 +1111,57 @@ async def detect_ngrok():
 @app.get("/api/call-log")
 async def get_call_log():
     return {"calls": call_log[-200:]}
+
+
+# ---------------------------------------------------------------------------
+# Campaign history endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/campaigns")
+async def list_campaigns():
+    """Return summary list of all past campaigns (no call details)."""
+    return {"campaigns": _list_campaigns()}
+
+
+@app.get("/api/campaigns/{campaign_id}")
+async def get_campaign(campaign_id: str):
+    """Return full campaign detail including all call records."""
+    campaign = _load_campaign(campaign_id)
+    if campaign is None:
+        return JSONResponse({"error": "Campaign not found"}, status_code=404)
+    return campaign
+
+
+@app.get("/api/campaigns/{campaign_id}/export")
+async def export_campaign(campaign_id: str):
+    """Return campaign call log as a CSV file download."""
+    import csv as csv_mod
+    import io
+
+    campaign = _load_campaign(campaign_id)
+    if campaign is None:
+        return JSONResponse({"error": "Campaign not found"}, status_code=404)
+
+    output = io.StringIO()
+    writer = csv_mod.writer(output)
+    writer.writerow(["Name", "Phone", "Status", "Answered By", "Timestamp", "Duration"])
+    for call in campaign.get("calls", []):
+        writer.writerow([
+            call.get("name", ""),
+            call.get("phone", ""),
+            call.get("status", ""),
+            call.get("answered_by", ""),
+            call.get("timestamp", ""),
+            call.get("duration", 0),
+        ])
+
+    csv_bytes = output.getvalue().encode("utf-8")
+    filename = f"{campaign_id}.csv"
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.websocket("/ws")
