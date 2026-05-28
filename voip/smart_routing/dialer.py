@@ -294,25 +294,32 @@ class SmartDialer:
 
         url = f"{self.sw_base_url}/Accounts/{self.account_sid}/Calls.json"
 
-        data: dict = {
-            "To":                   call_params["to"],
-            "From":                 call_params["from_"],
-            "Url":                  call_params["url"],
-            "StatusCallback":       call_params.get("status_callback", ""),
-            "StatusCallbackMethod": call_params.get("status_callback_method", "POST"),
-            "Timeout":              str(call_params.get("timeout", 20)),
-        }
+        # Core required params
+        data: list[tuple[str, str]] = [
+            ("To",     call_params["to"]),
+            ("From",   call_params["from_"]),
+            ("Url",    call_params["url"]),
+            ("Timeout", str(call_params.get("timeout", 20))),
+        ]
 
-        for ev in call_params.get("status_callback_event", []):
-            data.setdefault("StatusCallbackEvent[]", [])
-            data["StatusCallbackEvent[]"].append(ev)  # type: ignore
+        # Status callback
+        if call_params.get("status_callback"):
+            data.append(("StatusCallback", call_params["status_callback"]))
+            data.append(("StatusCallbackMethod", "POST"))
+            for ev in call_params.get("status_callback_event", []):
+                data.append(("StatusCallbackEvent", ev))
 
+        # AMD params
         if "machine_detection" in call_params:
-            data["MachineDetection"]             = call_params["machine_detection"]
-            data["MachineDetectionTimeout"]      = str(call_params.get("machine_detection_timeout", 30))
-            data["AsyncAmd"]                     = "true"
-            data["AsyncAmdStatusCallback"]       = call_params.get("async_amd_status_callback", "")
-            data["AsyncAmdStatusCallbackMethod"] = "POST"
+            data.append(("MachineDetection", call_params["machine_detection"]))
+            data.append(("MachineDetectionTimeout", str(call_params.get("machine_detection_timeout", 30))))
+            data.append(("AsyncAmd", "true"))
+            if call_params.get("async_amd_status_callback"):
+                data.append(("AsyncAmdStatusCallback", call_params["async_amd_status_callback"]))
+                data.append(("AsyncAmdStatusCallbackMethod", "POST"))
+
+        self.logger.info("SignalWire POST to %s with To=%s From=%s Url=%s",
+                         url, call_params["to"], call_params["from_"], call_params["url"])
 
         resp = req.post(
             url,
@@ -320,6 +327,10 @@ class SmartDialer:
             auth=(self.account_sid, self.auth_token),
             timeout=10,
         )
+        if not resp.ok:
+            self.logger.error(
+                "SignalWire %s error — body: %s", resp.status_code, resp.text
+            )
         resp.raise_for_status()
         result = resp.json()
         return result.get("sid") or result.get("Sid", "")
