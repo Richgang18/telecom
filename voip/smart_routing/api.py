@@ -15,6 +15,8 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+campaign_lock = threading.Lock()
+
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -140,6 +142,17 @@ def _list_campaigns() -> list[dict]:
         try:
             with open(p, encoding="utf-8") as f:
                 data = json.load(f)
+            # Auto-fix stuck "running" campaigns older than 1 hour
+            if data.get("status") == "running" and data.get("ended_at") is None:
+                try:
+                    started = datetime.fromisoformat(data["started_at"])
+                    if (datetime.utcnow() - started).total_seconds() > 3600:
+                        data["status"] = "completed"
+                        data["ended_at"] = data["started_at"]  # approximate
+                        with open(p, "w", encoding="utf-8") as fw:
+                            json.dump(data, fw, indent=2)
+                except Exception:
+                    pass
             # Return summary without the full calls list
             summaries.append({k: v for k, v in data.items() if k != "calls"})
         except Exception:
@@ -175,7 +188,7 @@ def _update_campaign_call(
     answered_by: str = "",
     duration: int = 0,
 ) -> None:
-    """Add or update a call entry in the campaign record."""
+    """Add or update a call entry in the campaign record. Must be called with campaign_lock held."""
     # Check if call already exists
     for call in campaign["calls"]:
         if call["call_sid"] == call_sid:
@@ -388,16 +401,17 @@ async def connect_call(request: Request):
             except Exception:
                 pass
             # Record voicemail drop in campaign
-            if current_campaign is not None:
-                _update_campaign_call(
-                    current_campaign,
-                    call_sid=call_sid,
-                    name="",
-                    phone=form.get("To", ""),
-                    status="voicemail_dropped",
-                    answered_by=answered_by,
-                )
-                _save_campaign(current_campaign)
+            with campaign_lock:
+                if current_campaign is not None:
+                    _update_campaign_call(
+                        current_campaign,
+                        call_sid=call_sid,
+                        name="",
+                        phone=form.get("To", ""),
+                        status="voicemail_dropped",
+                        answered_by=answered_by,
+                    )
+                    _save_campaign(current_campaign)
             return Response(content=twiml, media_type="text/xml")
 
         if agent_mode == "mobile":
@@ -697,25 +711,26 @@ async def call_status(request: Request):
                 break
 
         # Update campaign record with terminal call status
-        if current_campaign is not None:
-            status_map = {
-                "completed": "answered",
-                "no-answer": "no_answer",
-                "busy": "no_answer",
-                "failed": "failed",
-                "canceled": "failed",
-            }
-            mapped_status = status_map.get(call_status_val, call_status_val)
-            _update_campaign_call(
-                current_campaign,
-                call_sid=call_sid,
-                name="",
-                phone=to_number,
-                status=mapped_status,
-                answered_by=answered_by,
-                duration=call_duration,
-            )
-            _save_campaign(current_campaign)
+        with campaign_lock:
+            if current_campaign is not None:
+                status_map = {
+                    "completed": "answered",
+                    "no-answer": "no_answer",
+                    "busy": "no_answer",
+                    "failed": "failed",
+                    "canceled": "failed",
+                }
+                mapped_status = status_map.get(call_status_val, call_status_val)
+                _update_campaign_call(
+                    current_campaign,
+                    call_sid=call_sid,
+                    name="",
+                    phone=to_number,
+                    status=mapped_status,
+                    answered_by=answered_by,
+                    duration=call_duration,
+                )
+                _save_campaign(current_campaign)
 
     await manager.broadcast({
         "event": "call_status",
@@ -1019,6 +1034,18 @@ async def upload_contacts(request: Request):
     return {"ok": True, "total": len(contacts)}
 
 
+async def _finalize_campaign_async():
+    """Auto-finalize campaign when dialer process exits naturally."""
+    global current_campaign
+    with campaign_lock:
+        if current_campaign is not None:
+            current_campaign["ended_at"] = datetime.utcnow().isoformat()
+            current_campaign["status"] = "completed"
+            _save_campaign(current_campaign)
+            logger.info("Campaign auto-finalized: %s", current_campaign["id"])
+            current_campaign = None
+
+
 @app.post("/api/dialer/start")
 async def start_dialer():
     global dialer_process, current_campaign
@@ -1063,6 +1090,11 @@ async def start_dialer():
                     manager.broadcast({"event": "log", "msg": line, "ts": datetime.utcnow().isoformat()}),
                     loop,
                 )
+        # Dialer process exited naturally — finalize campaign then broadcast stopped
+        asyncio.run_coroutine_threadsafe(
+            _finalize_campaign_async(),
+            loop,
+        )
         asyncio.run_coroutine_threadsafe(
             manager.broadcast({"event": "dialer_stopped", "ts": datetime.utcnow().isoformat()}),
             loop,
@@ -1085,12 +1117,13 @@ async def stop_dialer():
     dialer_process = None
 
     # Finalize the campaign record
-    if current_campaign is not None:
-        current_campaign["ended_at"] = datetime.utcnow().isoformat()
-        current_campaign["status"] = "completed"
-        _save_campaign(current_campaign)
-        logger.info("Campaign finalized: %s", current_campaign["id"])
-        current_campaign = None
+    with campaign_lock:
+        if current_campaign is not None:
+            current_campaign["ended_at"] = datetime.utcnow().isoformat()
+            current_campaign["status"] = "completed"
+            _save_campaign(current_campaign)
+            logger.info("Campaign finalized: %s", current_campaign["id"])
+            current_campaign = None
 
     await manager.broadcast({"event": "dialer_stopped", "ts": datetime.utcnow().isoformat()})
     return {"ok": True}
