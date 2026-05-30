@@ -316,6 +316,23 @@ async def ping():
 # Twilio Webhook endpoints
 # ---------------------------------------------------------------------------
 
+@app.post("/ringing")
+async def ringing(request: Request):
+    """
+    Called by SignalWire immediately when an outbound call connects (before AMD finishes).
+    Returns a long Pause to keep the call alive while AMD detects human vs machine.
+    The async_amd_status_callback will fire /connect once detection is complete.
+    """
+    form = await request.form()
+    call_sid = form.get("CallSid", "unknown")
+    call_status = form.get("CallStatus", "unknown")
+    logger.info("/ringing: SID=%s status=%s — holding for AMD", call_sid, call_status)
+    return Response(
+        content='<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="30"/></Response>',
+        media_type="text/xml"
+    )
+
+
 @app.post("/connect")
 async def connect_call(request: Request):
     # Log EVERYTHING from Twilio immediately before any processing
@@ -365,14 +382,20 @@ async def connect_call(request: Request):
         # ── Voicemail blast mode — play MP3 to everyone, no live agent ──
         if agent_mode == "voicemail_blast":
             webhook_base = config["twilio"].get("webhook_base_url", "").rstrip("/")
-            logger.info("Voicemail blast: playing voicemail to call %s (answered_by=%s)", call_sid, answered_by)
+            logger.info("Voicemail blast: call %s status=%s answered_by=%s", call_sid, call_status, answered_by)
 
-            # Play voicemail for ALL answer types:
-            # - human / unknown = person answered, play message directly
-            # - machine_end_beep = voicemail beep detected, play after beep
-            # - machine_end_silence / machine_end_other = play anyway
+            # Only play voicemail when the call is actually in-progress (answered).
+            # If the call is still initiating or ringing, return a short pause and wait
+            # for SignalWire to call back once the call is answered.
+            if call_status in ("initiated", "ringing"):
+                logger.info("Call %s not yet answered (status=%s) — waiting", call_sid, call_status)
+                return Response(
+                    content='<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="30"/></Response>',
+                    media_type="text/xml"
+                )
+
+            # AMD still detecting — wait for machine_end callback
             if answered_by == "machine_start":
-                # AMD still detecting — wait, don't play yet (async callback will fire again)
                 logger.info("AMD still detecting for call %s — waiting for machine_end callback", call_sid)
                 return Response(
                     content='<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="30"/></Response>',
