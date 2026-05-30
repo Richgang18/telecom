@@ -1,23 +1,27 @@
 "use client";
 import { useDialerStore } from "@/lib/store";
 import { startDialer, stopDialer, detectNgrok } from "@/lib/api";
-import { Play, Square, RefreshCw, Zap } from "lucide-react";
+import { Play, Square, Zap, AlertTriangle } from "lucide-react";
 import { useState } from "react";
 
 export default function CampaignControls() {
   const { system, setSystem, addLog } = useDialerStore();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleStart = async () => {
     setLoading(true);
+    setError(null);
     try {
       const r = await startDialer();
       if (r.ok) {
         setSystem({ dialer_running: true });
         addLog({ id: Date.now().toString(), ts: new Date().toISOString(), event: "dialer_started" });
       } else {
-        alert(r.error || "Failed to start dialer");
+        setError(r.error || "Failed to start dialer");
       }
+    } catch (e: any) {
+      setError("API not reachable — is the backend running?");
     } finally {
       setLoading(false);
     }
@@ -25,6 +29,7 @@ export default function CampaignControls() {
 
   const handleStop = async () => {
     setLoading(true);
+    setError(null);
     try {
       await stopDialer();
       setSystem({ dialer_running: false });
@@ -35,12 +40,13 @@ export default function CampaignControls() {
   };
 
   const handleDetectNgrok = async () => {
+    setError(null);
     const r = await detectNgrok();
     if (r.ok) {
       setSystem({ ngrok: true, ngrok_url: r.url });
-      addLog({ id: Date.now().toString(), ts: new Date().toISOString(), event: "log", msg: `Ngrok URL: ${r.url}` });
+      addLog({ id: Date.now().toString(), ts: new Date().toISOString(), event: "log", msg: `Ngrok URL updated: ${r.url}` });
     } else {
-      alert("Ngrok not detected. Make sure it is running.");
+      setError("Ngrok not detected. Make sure it is running, then click Detect Ngrok again.");
     }
   };
 
@@ -66,7 +72,7 @@ export default function CampaignControls() {
           disabled={system.dialer_running || loading}
         >
           <Play size={12} />
-          Start Campaign
+          {loading && !system.dialer_running ? "Starting..." : "Start Campaign"}
         </button>
 
         <button
@@ -81,13 +87,35 @@ export default function CampaignControls() {
         <button
           className="vici-btn vici-btn-blue"
           onClick={handleDetectNgrok}
+          disabled={loading}
         >
           <Zap size={12} />
           Detect Ngrok
         </button>
       </div>
 
-      {system.ngrok_url && (
+      {/* Error banner */}
+      {error && (
+        <div
+          style={{
+            marginTop: 10,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 6,
+            fontSize: 11,
+            color: "#d63031",
+            background: "rgba(214,48,49,0.08)",
+            border: "1px solid rgba(214,48,49,0.25)",
+            borderRadius: 4,
+            padding: "7px 10px",
+          }}
+        >
+          <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {system.ngrok_url && !error && (
         <div
           style={{
             marginTop: 10,

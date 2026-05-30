@@ -34,8 +34,22 @@ CONFIG_PATH = BASE_DIR / "config.ini"
 
 def load_config() -> configparser.ConfigParser:
     cfg = configparser.ConfigParser()
-    cfg.read(CONFIG_PATH)
+    # Read with UTF-8 and strip BOM — PowerShell Set-Content writes UTF-8 BOM
+    # which causes configparser to misread the first section header.
+    try:
+        text = CONFIG_PATH.read_text(encoding="utf-8-sig")  # utf-8-sig strips BOM
+        cfg.read_string(text)
+    except Exception:
+        cfg.read(CONFIG_PATH)  # fallback
     return cfg
+
+
+def save_config_file(cfg: configparser.ConfigParser) -> None:
+    """Write config.ini without BOM so Python and PowerShell both read it correctly."""
+    import io
+    buf = io.StringIO()
+    cfg.write(buf)
+    CONFIG_PATH.write_text(buf.getvalue(), encoding="utf-8")  # plain UTF-8, no BOM
 
 
 config = load_config()
@@ -841,8 +855,7 @@ async def start_ngrok_service():
     if existing_url:
         _reload_config()
         config["twilio"]["webhook_base_url"] = existing_url
-        with open(CONFIG_PATH, "w") as f:
-            config.write(f)
+        save_config_file(config)
         return {"ok": True, "url": existing_url, "already_running": True}
 
     # Find ngrok - check same folder first (highest priority)
@@ -909,8 +922,7 @@ async def start_ngrok_service():
         if url:
             _reload_config()
             config["twilio"]["webhook_base_url"] = url
-            with open(CONFIG_PATH, "w") as f:
-                config.write(f)
+            save_config_file(config)
             await manager.broadcast({"event": "ngrok_ready", "url": url, "ts": datetime.utcnow().isoformat()})
             logger.info("Ngrok tunnel ready: %s", url)
             return {"ok": True, "url": url}
@@ -1009,8 +1021,7 @@ async def save_config(request: Request):
         if s.get("ngrok_authtoken") is not None:
             config["system"]["ngrok_authtoken"] = s["ngrok_authtoken"]
 
-    with open(CONFIG_PATH, "w") as f:
-        config.write(f)
+    save_config_file(config)
     _reload_config()
     return {"ok": True}
 
@@ -1075,8 +1086,30 @@ async def start_dialer():
     if dialer_process and dialer_process.poll() is None:
         return {"ok": False, "error": "Dialer already running"}
 
-    # Count contacts for the campaign record
+    # ── Pre-flight: auto-detect live ngrok URL and update config ──
     _reload_config()
+    live_url = _get_ngrok_url()
+    if live_url:
+        if live_url.rstrip("/") != config["twilio"].get("webhook_base_url", "").rstrip("/"):
+            logger.info("Ngrok URL changed — updating config: %s", live_url)
+            config["twilio"]["webhook_base_url"] = live_url.rstrip("/")
+            save_config_file(config)
+            _reload_config()
+    else:
+        # No live ngrok — block launch with a clear error
+        webhook_url = config["twilio"].get("webhook_base_url", "").strip()
+        if not webhook_url or "ngrok" in webhook_url.lower():
+            return {
+                "ok": False,
+                "error": (
+                    "Ngrok is not running. SignalWire cannot reach your webhook. "
+                    "Click 'Detect Ngrok' or restart the launcher, then try again."
+                )
+            }
+        # Non-ngrok webhook (e.g. fixed domain) — allow through
+        logger.warning("Ngrok not detected — using configured webhook: %s", webhook_url)
+
+    # ── Count contacts for the campaign record ────────────────────
     total_contacts = 0
     try:
         import csv as csv_mod
@@ -1158,8 +1191,7 @@ async def detect_ngrok():
     if url:
         _reload_config()
         config["twilio"]["webhook_base_url"] = url
-        with open(CONFIG_PATH, "w") as f:
-            config.write(f)
+        save_config_file(config)
         return {"ok": True, "url": url}
     return {"ok": False, "url": ""}
 

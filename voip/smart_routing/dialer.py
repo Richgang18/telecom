@@ -34,7 +34,13 @@ CONFIG_PATH = Path(__file__).parent / "config.ini"
 
 def load_config() -> configparser.ConfigParser:
     cfg = configparser.ConfigParser()
-    cfg.read(CONFIG_PATH)
+    # Read with UTF-8 and strip BOM — PowerShell Set-Content writes UTF-8 BOM
+    # which causes configparser to misread the first section header.
+    try:
+        text = CONFIG_PATH.read_text(encoding="utf-8-sig")  # utf-8-sig strips BOM
+        cfg.read_string(text)
+    except Exception:
+        cfg.read(CONFIG_PATH)  # fallback
     return cfg
 
 

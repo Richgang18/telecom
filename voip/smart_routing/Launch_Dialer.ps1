@@ -176,7 +176,6 @@ if ($ngrokExe) {
         -ArgumentList "http", "5000", "--request-header-add", "ngrok-skip-browser-warning:true" `
         -WindowStyle Hidden `
         -PassThru
-    $childPids.Add($script:ngrokProc.Id)
 
     # Wait up to 10s for tunnel
     $nw = 0
@@ -193,7 +192,9 @@ if ($ngrokExe) {
                 # Save to config.ini
                 $configContent = Get-Content "$ScriptDir\config.ini" -Raw
                 $configContent = $configContent -replace "webhook_base_url\s*=.*", "webhook_base_url = $ngrokUrl"
-                Set-Content "$ScriptDir\config.ini" $configContent -Encoding UTF8
+                # Write WITHOUT BOM — Python configparser breaks with UTF-8 BOM
+                $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+                [System.IO.File]::WriteAllText("$ScriptDir\config.ini", $configContent, $utf8NoBom)
                 $ngrokReady = $true
             }
         } catch {}
