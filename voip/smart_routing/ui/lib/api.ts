@@ -39,6 +39,16 @@ export async function fetchCallLog() {
   return r.json();
 }
 
+export async function fetchCampaigns() {
+  const r = await fetch(`${BASE}/api/campaigns`);
+  return r.json();
+}
+
+export async function fetchCampaign(id: string) {
+  const r = await fetch(`${BASE}/api/campaigns/${id}`);
+  return r.json();
+}
+
 export function createWebSocket(onMessage: (data: any) => void, onOpen?: () => void, onClose?: () => void) {
   const ws = new WebSocket("ws://localhost:5000/ws");
   ws.onopen = () => onOpen?.();

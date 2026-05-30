@@ -7,19 +7,20 @@ import LiveLog from "@/components/LiveLog";
 import { useDialerStore } from "@/lib/store";
 
 export default function Dashboard() {
-  const { totalCalls, answered, voicemail, noAnswer, totalContacts, system } = useDialerStore();
+  const { totalCalls, answered, voicemail, noAnswer, failed, totalContacts, system } = useDialerStore();
 
   const answerRate = totalCalls > 0 ? Math.round((answered / totalCalls) * 100) : 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%", minHeight: 0 }}>
       {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
         <StatCard label="Total Contacts" value={totalContacts.toLocaleString()} color="#0984e3" />
         <StatCard label="Calls Made"     value={totalCalls}   color="#6c5ce7" />
         <StatCard label="Answered"       value={answered}     color="#00b894" sub={`${answerRate}% rate`} />
         <StatCard label="Voicemail"      value={voicemail}    color="#fdcb6e" />
         <StatCard label="No Answer"      value={noAnswer}     color="#d63031" />
+        <StatCard label="Failed"         value={failed}       color="#636e72" />
       </div>
 
       {/* Middle row */}

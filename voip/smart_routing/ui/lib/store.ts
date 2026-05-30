@@ -39,12 +39,19 @@ interface DialerStore {
   setAgents: (agents: Agent[]) => void;
   updateAgent: (id: string, patch: Partial<Agent>) => void;
 
-  // Stats
+  // Stats — driven by campaign polling, not WS events
   totalCalls: number;
   answered: number;
   voicemail: number;
   noAnswer: number;
+  failed: number;
   incStat: (key: "answered" | "voicemail" | "noAnswer") => void;
+  setStats: (patch: { totalCalls?: number; answered?: number; voicemail?: number; noAnswer?: number; failed?: number }) => void;
+  resetStats: () => void;
+
+  // Active campaign id being tracked
+  activeCampaignId: string | null;
+  setActiveCampaignId: (id: string | null) => void;
 
   // Call log
   callLog: CallEntry[];
@@ -78,8 +85,14 @@ export const useDialerStore = create<DialerStore>((set) => ({
   answered: 0,
   voicemail: 0,
   noAnswer: 0,
+  failed: 0,
   incStat: (key) =>
     set((s) => ({ [key]: s[key] + 1, totalCalls: s.totalCalls + 1 } as any)),
+  setStats: (patch) => set((s) => ({ ...s, ...patch })),
+  resetStats: () => set({ totalCalls: 0, answered: 0, voicemail: 0, noAnswer: 0, failed: 0 }),
+
+  activeCampaignId: null,
+  setActiveCampaignId: (id) => set({ activeCampaignId: id }),
 
   callLog: [],
   addLog: (entry) =>
