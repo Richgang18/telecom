@@ -42,7 +42,12 @@ function Kill-Port($port) {
 
 function Start-Api {
     Kill-Port 5000
-    Start-Sleep -Milliseconds 500
+    # Wait until port is actually free (up to 5s)
+    $waited = 0
+    while ((Port-Listening 5000) -and $waited -lt 10) {
+        Start-Sleep -Milliseconds 500
+        $waited++
+    }
     $script:apiProc = Start-Process python `
         -ArgumentList "`"$ScriptDir\api.py`"" `
         -WorkingDirectory $ScriptDir `
@@ -172,10 +177,21 @@ if ($ngrokExe) {
     taskkill /IM ngrok.exe /F 2>$null | Out-Null
     Start-Sleep -Milliseconds 500
 
-    $script:ngrokProc = Start-Process $ngrokExe `
-        -ArgumentList "http", "5000", "--request-header-add", "ngrok-skip-browser-warning:true" `
-        -WindowStyle Hidden `
-        -PassThru
+    # Always use ngrok.yml config file — it sets ngrok-skip-browser-warning header
+    # Without this header, SignalWire gets an HTML interstitial instead of TwiML
+    $ngrokConfigFile = "$ScriptDir\ngrok.yml"
+    if (Test-Path $ngrokConfigFile) {
+        $script:ngrokProc = Start-Process $ngrokExe `
+            -ArgumentList "start", "smart-dialer", "--config", $ngrokConfigFile `
+            -WindowStyle Hidden `
+            -PassThru
+    } else {
+        # Fallback if config file missing
+        $script:ngrokProc = Start-Process $ngrokExe `
+            -ArgumentList "http", "5000", "--request-header-add", "ngrok-skip-browser-warning:true" `
+            -WindowStyle Hidden `
+            -PassThru
+    }
 
     # Wait up to 10s for tunnel
     $nw = 0

@@ -893,21 +893,34 @@ async def start_ngrok_service():
                 capture_output=True, timeout=5
             )
 
-    # Start ngrok with config file to bypass browser warning
+    # Start ngrok — always use config file so browser warning header is set
     logger.info("Starting ngrok tunnel on port 5000...")
-    ngrok_args = [ngrok_exe, "http", "5000", "--request-header-add", "ngrok-skip-browser-warning:true"]
-
-    # Use config file if it exists
     ngrok_config = BASE_DIR / "ngrok.yml"
+
+    # Update authtoken in config file
+    if config.has_section("system"):
+        token = config["system"].get("ngrok_authtoken", "").strip()
+        if token and ngrok_config.exists():
+            content = ngrok_config.read_text(encoding="utf-8")
+            import re as _re
+            # Replace or insert authtoken line
+            if "authtoken:" in content:
+                content = _re.sub(r"authtoken:.*", f"authtoken: {token}", content)
+            else:
+                content = content.replace("agent:", f"agent:\n  authtoken: {token}", 1)
+            ngrok_config.write_text(content, encoding="utf-8")
+            # Also configure via CLI to ensure it's saved globally
+            subprocess.run(
+                [ngrok_exe, "config", "add-authtoken", token],
+                capture_output=True, timeout=5
+            )
+
     if ngrok_config.exists():
-        # Update authtoken in config file first
-        if config.has_section("system"):
-            token = config["system"].get("ngrok_authtoken", "").strip()
-            if token:
-                content = ngrok_config.read_text()
-                content = content.replace("YOUR_NGROK_TOKEN_HERE", token)
-                ngrok_config.write_text(content)
         ngrok_args = [ngrok_exe, "start", "smart-dialer", "--config", str(ngrok_config)]
+    else:
+        # Fallback: inline header flag
+        ngrok_args = [ngrok_exe, "http", "5000",
+                      "--request-header-add", "ngrok-skip-browser-warning:true"]
 
     ngrok_process = subprocess.Popen(
         ngrok_args,
@@ -1069,8 +1082,26 @@ async def upload_contacts(request: Request):
 
 
 async def _finalize_campaign_async():
-    """Auto-finalize campaign when dialer process exits naturally."""
+    """
+    Auto-finalize campaign when dialer process exits.
+    Waits up to 5 minutes for in-flight calls to complete before closing.
+    """
     global current_campaign
+
+    # Wait for in-flight calls — poll every 5s for up to 5 minutes
+    for _ in range(60):
+        with campaign_lock:
+            if current_campaign is None:
+                return  # already finalized by stop_dialer
+            # Count calls still in initiated/ringing/in-progress state
+            in_flight = sum(
+                1 for c in current_campaign.get("calls", [])
+                if c.get("status") in ("initiated", "ringing", "in-progress", "")
+            )
+        if in_flight == 0:
+            break
+        await asyncio.sleep(5)
+
     with campaign_lock:
         if current_campaign is not None:
             current_campaign["ended_at"] = datetime.utcnow().isoformat()
