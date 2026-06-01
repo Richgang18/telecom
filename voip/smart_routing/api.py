@@ -472,19 +472,14 @@ async def connect_call(request: Request):
             timeout = int(config["agents"].get("agent_timeout", "20"))
 
             router.mark_busy_by_index(agent_index, call_sid)
-            print("DEBUG1: mark_busy done", flush=True)
             agent_busy_since[str(agent_index)] = datetime.utcnow()
-            print("DEBUG2: agent_busy_since done", flush=True)
             connected_calls.add(call_sid)
-            print("DEBUG3: connected_calls done", flush=True)
 
             # Use config value directly — never block the event loop checking ngrok
             webhook_base = config["twilio"].get("webhook_base_url", "").rstrip("/")
-            print(f"DEBUG4: webhook_base={webhook_base}", flush=True)
 
             logger.info("BRIDGING: call=%s mobile=%s webhook=%s timeout=%s",
                         call_sid, mobile, webhook_base, timeout)
-            print("DEBUG5: about to build twiml", flush=True)
 
             twiml = (
                 f'<?xml version="1.0" encoding="UTF-8"?>'
@@ -532,89 +527,6 @@ async def connect_call(request: Request):
             content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
             media_type="text/xml"
         )
-async def connect_call(request: Request):
-    form = await request.form()
-    call_sid = form.get("CallSid", "unknown")
-    answered_by = form.get("AnsweredBy", "unknown")
-
-    logger.info("Call answered: SID=%s answered_by=%s", call_sid, answered_by)
-
-    # ── Machine detected → drop voicemail, never bridge ──────────
-    if answered_by in ("machine_start", "machine_end", "machine_end_beep",
-                       "machine_end_silence", "machine_end_other", "fax"):
-        logger.info("AMD: machine detected (%s) — dropping voicemail", answered_by)
-        # If we already bridged this call (answered_by=unknown first), hang up the agent leg
-        if call_sid in connected_calls:
-            logger.info("Call %s was already bridged — ignoring machine AMD callback", call_sid)
-            return Response(
-                content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
-                media_type="text/xml"
-            )
-        await manager.broadcast({"event": "amd_machine", "call_sid": call_sid, "ts": datetime.utcnow().isoformat()})
-        return Response(content=generate_no_answer_twiml(config), media_type="text/xml")
-
-    # ── Already connected (async AMD second callback) → do nothing ─
-    if call_sid in connected_calls:
-        logger.info("Call %s already connected — ignoring duplicate /connect callback", call_sid)
-        return Response(
-            content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
-            media_type="text/xml"
-        )
-
-    # ── Human answered (or unknown = connect immediately) ─────────
-    _reload_config()
-    agent_mode = config["agents"].get("agent_mode", "softphone")
-
-    if agent_mode == "mobile":
-        agent_index = router.get_available_agent_index()
-        if agent_index is None:
-            logger.warning("No agents available for call %s", call_sid)
-            await manager.broadcast({"event": "no_agent", "call_sid": call_sid, "ts": datetime.utcnow().isoformat()})
-            return Response(content=router.generate_busy_twiml(), media_type="text/xml")
-
-        mobile_numbers = [n.strip() for n in config["agents"].get("agent_mobile_numbers", "").split(",")]
-        mobile = mobile_numbers[agent_index]
-        timeout = int(config["agents"].get("agent_timeout", "20"))
-
-        router.mark_busy_by_index(agent_index, call_sid)
-        agent_busy_since[str(agent_index)] = datetime.utcnow()
-        connected_calls.add(call_sid)
-
-        # Always use the LIVE ngrok URL, not the stale one from config
-        live_url = _get_ngrok_url()
-        webhook_base = (live_url or config["twilio"]["webhook_base_url"]).rstrip("/")
-        logger.info("Bridging call %s to mobile agent %d: %s (webhook: %s)", call_sid, agent_index, mobile, webhook_base)
-
-        twiml = (
-            f'<?xml version="1.0" encoding="UTF-8"?>'
-            f'<Response>'
-            f'<Dial timeout="{timeout}" action="{webhook_base}/agent-complete?agent={agent_index}">'
-            f'<Number>{mobile}</Number>'
-            f'</Dial>'
-            f'<Play>{webhook_base}/voicemail-audio</Play>'
-            f'</Response>'
-        )
-        await manager.broadcast({
-            "event": "call_connected", "call_sid": call_sid,
-            "agent": agent_index, "mobile": mobile,
-            "ts": datetime.utcnow().isoformat()
-        })
-        return Response(content=twiml, media_type="text/xml")
-
-    else:
-        ext = router.get_available_agent()
-        if ext is None:
-            return Response(content=router.generate_busy_twiml(), media_type="text/xml")
-        router.mark_busy(ext, call_sid)
-        agent_busy_since[ext] = datetime.utcnow()
-        connected_calls.add(call_sid)
-        webhook_base = config["twilio"]["webhook_base_url"].rstrip("/")
-        twiml = router.generate_connect_twiml(ext, webhook_base)
-        await manager.broadcast({
-            "event": "call_connected", "call_sid": call_sid,
-            "agent": ext, "ts": datetime.utcnow().isoformat()
-        })
-        return Response(content=twiml, media_type="text/xml")
 
 
 @app.post("/inbound")

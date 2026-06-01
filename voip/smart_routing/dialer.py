@@ -302,6 +302,27 @@ class SmartDialer:
                     self._active_calls[sid] = contact
             return sid
         except Exception as e:
+            err_str = str(e)
+            # Rate limit hit — wait and retry once
+            if "rate" in err_str.lower() or "429" in err_str or "30022" in err_str:
+                self.logger.warning(
+                    "Rate limit hit for %s (%s) — waiting 5s then retrying", name, phone
+                )
+                time.sleep(5)
+                try:
+                    if self.use_signalwire:
+                        sid = self._call_via_signalwire(call_params)
+                    else:
+                        call = self.client.calls.create(**call_params)
+                        sid = call.sid
+                    if sid:
+                        self.logger.info("Retry succeeded: SID=%s to=%s name=%s", sid, phone, name)
+                        with self._lock:
+                            self._active_calls[sid] = contact
+                    return sid
+                except Exception as e2:
+                    self.logger.error("Retry also failed for %s (%s): %s", name, phone, e2)
+                    return None
             self.logger.error("Failed to dial %s (%s): %s", name, phone, e)
             return None
 
@@ -345,9 +366,13 @@ class SmartDialer:
             timeout=10,
         )
         if not resp.ok:
+            body = resp.text
             self.logger.error(
-                "SignalWire %s error — body: %s", resp.status_code, resp.text
+                "SignalWire %s error — body: %s", resp.status_code, body
             )
+            # Surface rate limit clearly
+            if resp.status_code in (429, 422) and ("rate" in body.lower() or "30022" in body):
+                raise Exception(f"Rate limit exceeded (HTTP {resp.status_code}): {body}")
         resp.raise_for_status()
         result = resp.json()
         return result.get("sid") or result.get("Sid", "")
