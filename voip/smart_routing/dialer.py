@@ -287,16 +287,16 @@ class SmartDialer:
         }
 
         if agent_mode == "voicemail_blast":
-            # For voicemail blast: use AMD to detect answer/machine, then play voicemail.
-            # The url is called when the call is answered (in-progress).
-            # async_amd_status_callback fires when AMD finishes detecting.
+            # Point url directly to /connect — plays voicemail immediately on answer.
+            # No AMD needed: we play the voicemail regardless of human or machine.
+            # This avoids the AMD timeout causing no-answer before playback starts.
+            call_params["url"] = f"{webhook_base}/connect"
+            # Keep AMD as async so we can log human vs machine, but don't block on it
             call_params["machine_detection"] = "DetectMessageEnd"
             call_params["machine_detection_timeout"] = amd_timeout
             call_params["async_amd"] = "true"
             call_params["async_amd_status_callback"] = f"{webhook_base}/connect"
             call_params["async_amd_status_callback_method"] = "POST"
-            # Override url to a no-op while AMD is running — AMD callback will handle playback
-            call_params["url"] = f"{webhook_base}/ringing"
         elif enable_amd:
             call_params["machine_detection"] = "DetectMessageEnd"
             call_params["machine_detection_timeout"] = amd_timeout

@@ -398,26 +398,21 @@ async def connect_call(request: Request):
             webhook_base = config["twilio"].get("webhook_base_url", "").rstrip("/")
             logger.info("Voicemail blast: call %s status=%s answered_by=%s", call_sid, call_status, answered_by)
 
-            # Only play voicemail when the call is actually in-progress (answered).
-            # If the call is still initiating or ringing, return a short pause and wait
-            # for SignalWire to call back once the call is answered.
-            if call_status in ("initiated", "ringing"):
-                logger.info("Call %s not yet answered (status=%s) — waiting", call_sid, call_status)
+            # ── Voicemail blast: play immediately regardless of who/what answered ──
+            # url=/connect is called the moment the call is answered (human or machine).
+            # AMD async callback also hits /connect — skip duplicate plays.
+            if call_sid in connected_calls:
+                logger.info("Call %s already played voicemail — ignoring duplicate /connect", call_sid)
                 return Response(
-                    content='<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="30"/></Response>',
+                    content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
                     media_type="text/xml"
                 )
 
-            # AMD still detecting — wait for machine_end callback
-            if answered_by == "machine_start":
-                logger.info("AMD still detecting for call %s — waiting for machine_end callback", call_sid)
-                return Response(
-                    content='<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="30"/></Response>',
-                    media_type="text/xml"
-                )
+            connected_calls.add(call_sid)
 
-            # For human answers add 1s pause, for machine answers no pause (beep already happened)
-            pause = "1" if answered_by in ("human", "unknown") else "0"
+            # Small pause for human answers so the greeting isn't cut off;
+            # no pause for machine (beep already happened) or unknown.
+            pause = "1" if answered_by == "human" else "0"
 
             twiml = (
                 f'<?xml version="1.0" encoding="UTF-8"?>'
@@ -427,7 +422,7 @@ async def connect_call(request: Request):
                 f'<Hangup/>'
                 f'</Response>'
             )
-            logger.info("Voicemail TwiML: %s", twiml)
+            logger.info("Voicemail TwiML (answered_by=%s status=%s): %s", answered_by, call_status, twiml)
             try:
                 await manager.broadcast({
                     "event": "voicemail_dropped",
