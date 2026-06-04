@@ -410,9 +410,9 @@ async def connect_call(request: Request):
 
             connected_calls.add(call_sid)
 
-            # Small pause for human answers so the greeting isn't cut off;
-            # no pause for machine (beep already happened) or unknown.
-            pause = "1" if answered_by == "human" else "0"
+            # No pause — play immediately when answered
+            # Any pause causes the recipient to hear silence and hang up
+            pause = "0"
 
             twiml = (
                 f'<?xml version="1.0" encoding="UTF-8"?>'

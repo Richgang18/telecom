@@ -23,7 +23,11 @@ CONFIG_PATH = Path(__file__).parent / "config.ini"
 
 def load_config() -> configparser.ConfigParser:
     cfg = configparser.ConfigParser()
-    cfg.read(CONFIG_PATH)
+    try:
+        text = CONFIG_PATH.read_text(encoding="utf-8-sig")
+        cfg.read_string(text)
+    except Exception:
+        cfg.read(CONFIG_PATH)
     return cfg
 
 
