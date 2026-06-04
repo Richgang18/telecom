@@ -55,6 +55,10 @@ credentials.json
 *.p12
 *.pfx
 
+# Config files with live credentials
+voip/smart_routing/config.ini
+voip/smart_routing/ngrok.yml
+
 # =============================================================================
 # Asterisk runtime files (generated on the server, not source-controlled)
 # =============================================================================

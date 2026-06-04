@@ -876,6 +876,11 @@ async def get_config():
         "signalwire": {
             "space_url": config["signalwire"].get("space_url", "") if config.has_section("signalwire") else "",
         },
+        "telnyx": {
+            "api_key":       config["telnyx"].get("api_key", "")       if config.has_section("telnyx") else "",
+            "from_number":   config["telnyx"].get("from_number", "")   if config.has_section("telnyx") else "",
+            "connection_id": config["telnyx"].get("connection_id", "") if config.has_section("telnyx") else "",
+        },
         "agents": {
             "mode": config["agents"].get("agent_mode", "softphone"),
             "mobile_numbers": config["agents"].get("agent_mobile_numbers", ""),
@@ -918,8 +923,18 @@ async def save_config(request: Request):
         if not config.has_section("signalwire"):
             config.add_section("signalwire")
         sw = body["signalwire"]
-        # space_url can be empty string (means use Twilio)
         config["signalwire"]["space_url"] = sw.get("space_url", "").strip()
+
+    if "telnyx" in body:
+        if not config.has_section("telnyx"):
+            config.add_section("telnyx")
+        tx = body["telnyx"]
+        if tx.get("api_key") is not None:
+            config["telnyx"]["api_key"] = tx["api_key"].strip()
+        if tx.get("from_number"):
+            config["telnyx"]["from_number"] = tx["from_number"].strip()
+        if tx.get("connection_id") is not None:
+            config["telnyx"]["connection_id"] = tx.get("connection_id", "").strip()
 
     if "agents" in body:
         a = body["agents"]

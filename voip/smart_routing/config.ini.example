@@ -1,0 +1,42 @@
+[twilio]
+account_sid = YOUR_SIGNALWIRE_PROJECT_ID
+auth_token = YOUR_SIGNALWIRE_API_TOKEN
+from_number = +1XXXXXXXXXX
+webhook_base_url = https://your-ngrok-url.ngrok-free.dev
+
+[signalwire]
+space_url = yourspace.signalwire.com
+
+[telnyx]
+api_key = KEY...
+from_number = +1XXXXXXXXXX
+connection_id =
+
+[agents]
+max_concurrent_calls = 1
+agent_mode = voicemail_blast
+agent_mobile_numbers = +1XXXXXXXXXX
+agent_names = Agent 1
+agent_timeout = 20
+agent_extensions = 101,102
+enable_amd = true
+amd_timeout = 30
+callback_number = +1XXXXXXXXXX
+
+[dialer]
+ring_timeout = 20
+batch_delay = 2
+contact_list = contacts.csv
+concurrent_calls = 1
+
+[voicemail]
+voicemail_file = voicemail.mp3
+voicemail_delay = 2
+
+[logging]
+log_file = smart_routing.log
+log_level = INFO
+
+[system]
+wsl_sudo_password = YOUR_WSL_PASSWORD
+ngrok_authtoken = YOUR_NGROK_TOKEN

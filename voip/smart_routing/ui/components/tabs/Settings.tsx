@@ -32,6 +32,11 @@ export default function Settings() {
         signalwire: {
           space_url: cfg.signalwire?.space_url || "",
         },
+        telnyx: {
+          api_key:       cfg.telnyx?.api_key || "",
+          from_number:   cfg.telnyx?.from_number || "",
+          connection_id: cfg.telnyx?.connection_id || "",
+        },
         agents: {
           mode: cfg.agents.mode,
           mobile_numbers: cfg.agents.mobile_numbers,
@@ -67,6 +72,7 @@ export default function Settings() {
   }
 
   const usingSignalWire = !!(cfg.signalwire?.space_url?.trim());
+  const usingTelnyx = !!(cfg.telnyx?.api_key?.trim());
 
   return (
     <div style={{ maxWidth: 700, display: "flex", flexDirection: "column", gap: 16 }}>
@@ -83,20 +89,36 @@ export default function Settings() {
             name="Twilio"
             rate="$0.013/min"
             description="Default provider. Reliable, widely used."
-            active={!usingSignalWire}
-            onClick={() => update("signalwire", "space_url", "")}
+            active={!usingSignalWire && !usingTelnyx}
+            onClick={() => {
+              update("signalwire", "space_url", "");
+              update("telnyx", "api_key", "");
+            }}
           />
           <ProviderCard
             name="SignalWire"
             rate="$0.005/min"
             description="60% cheaper. Drop-in Twilio replacement."
-            active={usingSignalWire}
-            badge="RECOMMENDED"
-            onClick={() => update("signalwire", "space_url", cfg.signalwire?.space_url || "yourspace.signalwire.com")}
+            active={usingSignalWire && !usingTelnyx}
+            onClick={() => {
+              update("telnyx", "api_key", "");
+              update("signalwire", "space_url", cfg.signalwire?.space_url || "yourspace.signalwire.com");
+            }}
+          />
+          <ProviderCard
+            name="Telnyx"
+            rate="$0.004/min"
+            description="Fastest support. No KYC delays."
+            active={usingTelnyx}
+            badge="ACTIVE"
+            onClick={() => {
+              update("signalwire", "space_url", "");
+              update("telnyx", "api_key", cfg.telnyx?.api_key || "KEY...");
+            }}
           />
         </div>
 
-        {usingSignalWire && (
+        {usingSignalWire && !usingTelnyx && (
           <div style={{ background: "rgba(0,184,148,0.06)", border: "1px solid rgba(0,184,148,0.2)", borderRadius: 6, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ fontSize: 11, color: "#00b894", fontWeight: 700 }}>
               SignalWire Active — 60% cheaper than Twilio
@@ -113,12 +135,47 @@ export default function Settings() {
             </div>
           </div>
         )}
+
+        {usingTelnyx && (
+          <div style={{ background: "rgba(108,92,231,0.06)", border: "1px solid rgba(108,92,231,0.25)", borderRadius: 6, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 11, color: "#6c5ce7", fontWeight: 700 }}>
+              Telnyx Active — fastest support, no KYC delays
+            </div>
+            <Field
+              label="API Key (starts with KEY...)"
+              value={cfg.telnyx?.api_key || ""}
+              onChange={(v) => update("telnyx", "api_key", v)}
+              type="password"
+              placeholder="KEYxxxxxxxxxxxxxxxxxxxxxxxx"
+            />
+            <Field
+              label="From Number (Telnyx number in E.164)"
+              value={cfg.telnyx?.from_number || ""}
+              onChange={(v) => update("telnyx", "from_number", v)}
+              placeholder="+19109090124"
+            />
+            <Field
+              label="Connection ID (optional — from Telnyx portal)"
+              value={cfg.telnyx?.connection_id || ""}
+              onChange={(v) => update("telnyx", "connection_id", v)}
+              placeholder="Leave blank to use default outbound connection"
+            />
+            <div style={{ fontSize: 10, color: "#636e72" }}>
+              Get your API key from <strong>portal.telnyx.com</strong> → API Keys.
+              The From Number must be an active Telnyx number on your account.
+            </div>
+          </div>
+        )}
       </Section>
 
-      <Section title={usingSignalWire ? "SignalWire Credentials" : "Twilio Credentials"}>
-        <Field label={usingSignalWire ? "Project ID (Account SID)" : "Account SID"} value={cfg.twilio.account_sid} onChange={(v) => update("twilio", "account_sid", v)} />
-        <Field label={usingSignalWire ? "API Token (Auth Token)" : "Auth Token"} value={cfg.twilio.auth_token} onChange={(v) => update("twilio", "auth_token", v)} type="password" />
-        <Field label="From Number (your phone number)" value={cfg.twilio.from_number} onChange={(v) => update("twilio", "from_number", v)} placeholder="+17868339866" />
+      <Section title={usingTelnyx ? "Telnyx — Webhook & Fallback" : usingSignalWire ? "SignalWire Credentials" : "Twilio Credentials"}>
+        {!usingTelnyx && (
+          <>
+            <Field label={usingSignalWire ? "Project ID (Account SID)" : "Account SID"} value={cfg.twilio.account_sid} onChange={(v) => update("twilio", "account_sid", v)} />
+            <Field label={usingSignalWire ? "API Token (Auth Token)" : "Auth Token"} value={cfg.twilio.auth_token} onChange={(v) => update("twilio", "auth_token", v)} type="password" />
+            <Field label="From Number" value={cfg.twilio.from_number} onChange={(v) => update("twilio", "from_number", v)} placeholder="+17868339866" />
+          </>
+        )}
         <Field label="Webhook URL (ngrok URL)" value={cfg.twilio.webhook_base_url} onChange={(v) => update("twilio", "webhook_base_url", v)} placeholder="https://xxx.ngrok-free.dev" />
       </Section>
 

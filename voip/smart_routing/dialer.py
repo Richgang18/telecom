@@ -213,12 +213,27 @@ class SmartDialer:
         self.from_number  = twilio_cfg["from_number"]
         self.webhook_base = twilio_cfg["webhook_base_url"].rstrip("/")
 
-        # Detect provider
+        # Detect provider — Telnyx takes priority if api_key is set
+        telnyx_key = (
+            config["telnyx"].get("api_key", "").strip()
+            if config.has_section("telnyx") else ""
+        )
+        self.use_telnyx = bool(telnyx_key)
+
         self.use_signalwire = (
+            not self.use_telnyx and
             config.has_section("signalwire") and
             bool(config["signalwire"].get("space_url", "").strip())
         )
-        if self.use_signalwire:
+
+        if self.use_telnyx:
+            self.telnyx_api_key  = telnyx_key
+            self.telnyx_from     = config["telnyx"].get("from_number", "").strip()
+            if self.telnyx_from:
+                self.from_number = self.telnyx_from  # override from number
+            self.provider = "Telnyx"
+            self.logger.info("Provider: Telnyx (from=%s)", self.from_number)
+        elif self.use_signalwire:
             space_url = config["signalwire"]["space_url"].strip()
             if not space_url.startswith("http"):
                 space_url = f"https://{space_url}"
@@ -290,7 +305,9 @@ class SmartDialer:
             call_params["async_amd_status_callback_method"] = "POST"
 
         try:
-            if self.use_signalwire:
+            if self.use_telnyx:
+                sid = self._call_via_telnyx(call_params)
+            elif self.use_signalwire:
                 sid = self._call_via_signalwire(call_params)
             else:
                 call = self.client.calls.create(**call_params)
@@ -310,7 +327,9 @@ class SmartDialer:
                 )
                 time.sleep(5)
                 try:
-                    if self.use_signalwire:
+                    if self.use_telnyx:
+                        sid = self._call_via_telnyx(call_params)
+                    elif self.use_signalwire:
                         sid = self._call_via_signalwire(call_params)
                     else:
                         call = self.client.calls.create(**call_params)
@@ -376,6 +395,79 @@ class SmartDialer:
         resp.raise_for_status()
         result = resp.json()
         return result.get("sid") or result.get("Sid", "")
+
+    def _call_via_telnyx(self, call_params: dict) -> str | None:
+        """Make outbound call via Telnyx API v2."""
+        import requests as req
+
+        url = "https://api.telnyx.com/v2/calls"
+        webhook_base = call_params["url"].rsplit("/", 1)[0]  # base without path
+
+        # Telnyx uses a JSON body — completely different from Twilio's form params
+        payload = {
+            "to": call_params["to"],
+            "from": call_params["from_"],
+            "connection_id": "",          # filled from config if set
+            "webhook_url": call_params["url"],
+            "webhook_url_method": "POST",
+            "timeout_secs": call_params.get("timeout", 20),
+            "record_channels": "none",
+        }
+
+        # Connection ID (Telnyx credential/SIP connection) — optional
+        cfg = load_config()
+        connection_id = cfg["telnyx"].get("connection_id", "").strip() if cfg.has_section("telnyx") else ""
+        if connection_id:
+            payload["connection_id"] = connection_id
+        else:
+            del payload["connection_id"]
+
+        # AMD — Telnyx calls it answering_machine_detection
+        if "machine_detection" in call_params:
+            payload["answering_machine_detection"] = "detect_beep"
+            payload["answering_machine_detection_config"] = {
+                "total_analysis_time_millis": call_params.get("machine_detection_timeout", 30) * 1000,
+                "after_greeting_silence_millis": 800,
+                "between_words_silence_millis": 50,
+                "greeting_duration_millis": 3500,
+                "initial_silence_millis": 3000,
+                "maximum_number_of_words": 5,
+                "maximum_word_length_millis": 5000,
+                "silence_threshold": 256,
+                "greeting_total_analysis_time_millis": 7500,
+                "greeting_silence_duration_millis": 2000,
+            }
+            # Telnyx fires AMD result via webhook — same /connect endpoint
+            payload["answering_machine_detection_webhook_url"] = call_params.get(
+                "async_amd_status_callback", call_params["url"]
+            )
+
+        # Status callback via webhook
+        if call_params.get("status_callback"):
+            payload["webhook_url"] = call_params["url"]
+
+        self.logger.info("Telnyx POST to %s with to=%s from=%s url=%s",
+                         url, call_params["to"], call_params["from_"], call_params["url"])
+
+        resp = req.post(
+            url,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {self.telnyx_api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=10,
+        )
+        if not resp.ok:
+            body = resp.text
+            self.logger.error("Telnyx %s error — body: %s", resp.status_code, body)
+            if resp.status_code == 429:
+                raise Exception(f"Rate limit exceeded (HTTP 429): {body}")
+        resp.raise_for_status()
+        result = resp.json()
+        # Telnyx returns {"data": {"call_control_id": "...", "call_leg_id": "..."}}
+        data = result.get("data", {})
+        return data.get("call_control_id") or data.get("call_leg_id", "")
 
     def run(self, contacts: list[dict[str, str]], limit: int | None = None) -> None:
         """Dial all contacts with concurrent calling."""
