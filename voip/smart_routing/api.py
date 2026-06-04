@@ -574,13 +574,51 @@ async def inbound_call(request: Request):
 @app.post("/no-answer")
 async def no_answer(request: Request):
     form = await request.form()
-    call_sid = form.get("CallSid", "unknown")
-    status = form.get("CallStatus", "unknown")
-    to_number = form.get("To", "unknown")
+    call_sid   = form.get("CallSid", "unknown")
+    status     = form.get("CallStatus", "unknown")
+    to_number  = form.get("To", "unknown")
+    from_number = form.get("From", "unknown")
+    logger.info("No-answer: SID=%s status=%s to=%s from=%s", call_sid, status, to_number, from_number)
+
+    _reload_config()
+    agent_mode = config["agents"].get("agent_mode", "softphone")
+
     try:
-        await manager.broadcast({"event": "no_answer", "call_sid": call_sid, "status": status, "to": to_number, "ts": datetime.utcnow().isoformat()})
+        await manager.broadcast({
+            "event": "no_answer",
+            "call_sid": call_sid,
+            "status": status,
+            "to": to_number,
+            "ts": datetime.utcnow().isoformat()
+        })
     except Exception:
         pass
+
+    # In voicemail_blast mode: this endpoint is NOT the right place to drop voicemail
+    # because the call has already ended (no-answer = never connected).
+    # Log it and return empty response.
+    if agent_mode == "voicemail_blast":
+        logger.info(
+            "No-answer for voicemail blast call %s to %s — "
+            "call never connected, cannot drop voicemail. "
+            "This number likely has voicemail disabled or DND active.",
+            call_sid, to_number
+        )
+        with campaign_lock:
+            if current_campaign is not None:
+                _update_campaign_call(
+                    current_campaign,
+                    call_sid=call_sid,
+                    name="",
+                    phone=to_number,
+                    status="no_answer",
+                )
+                _save_campaign(current_campaign)
+        return Response(
+            content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+            media_type="text/xml"
+        )
+
     return Response(content=generate_no_answer_twiml(config), media_type="text/xml")
 
 

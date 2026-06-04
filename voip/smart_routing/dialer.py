@@ -281,9 +281,12 @@ class SmartDialer:
             "from_": self.from_number,
             "url": f"{webhook_base}/connect",
             "status_callback": f"{webhook_base}/call-status",
-            "status_callback_event": ["initiated", "ringing", "answered", "completed"],
+            "status_callback_event": ["initiated", "ringing", "answered", "completed", "no-answer", "busy", "failed"],
             "status_callback_method": "POST",
             "timeout": self.ring_timeout,
+            # fallback when call is not answered — triggers voicemail drop
+            "fallback_url": f"{webhook_base}/no-answer",
+            "fallback_method": "POST",
         }
 
         if agent_mode == "voicemail_blast":
@@ -358,6 +361,11 @@ class SmartDialer:
             ("Url",    call_params["url"]),
             ("Timeout", str(call_params.get("timeout", 20))),
         ]
+
+        # Fallback URL for no-answer (voicemail drop)
+        if call_params.get("fallback_url"):
+            data.append(("FallbackUrl",    call_params["fallback_url"]))
+            data.append(("FallbackMethod", call_params.get("fallback_method", "POST")))
 
         # Status callback
         if call_params.get("status_callback"):
