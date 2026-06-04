@@ -126,11 +126,17 @@ export default function WsProvider({ children }: { children: React.ReactNode }) 
       }
       case "dialer_stopped": {
         setSystem({ dialer_running: false });
-        // Do one final poll then stop
-        if (activeCampaignRef.current) {
-          fetch(`${BASE}/api/campaigns/${activeCampaignRef.current}`)
-            .then((r) => r.json())
-            .then((data) => {
+        // Keep polling for 3 minutes after dialer stops to catch late callbacks
+        const finalCampaignId = activeCampaignRef.current;
+        if (finalCampaignId) {
+          let pollCount = 0;
+          const maxPolls = 60; // 3 minutes at 3s intervals
+          const latePoller = setInterval(async () => {
+            pollCount++;
+            try {
+              const r = await fetch(`${BASE}/api/campaigns/${finalCampaignId}`);
+              if (!r.ok) { clearInterval(latePoller); return; }
+              const data = await r.json();
               setStats({
                 totalCalls: data.dialed ?? 0,
                 answered: data.answered ?? 0,
@@ -138,8 +144,9 @@ export default function WsProvider({ children }: { children: React.ReactNode }) 
                 noAnswer: data.no_answer ?? 0,
                 failed: data.failed ?? 0,
               });
-            })
-            .catch(() => {});
+            } catch {}
+            if (pollCount >= maxPolls) clearInterval(latePoller);
+          }, 3000);
         }
         stopCampaignPoll();
         setActiveCampaignId(null);

@@ -204,6 +204,7 @@ def _update_campaign_call(
 ) -> None:
     """Add or update a call entry in the campaign record. Must be called with campaign_lock held."""
     # Check if call already exists
+    found = False
     for call in campaign["calls"]:
         if call["call_sid"] == call_sid:
             call["status"] = status
@@ -211,19 +212,23 @@ def _update_campaign_call(
                 call["answered_by"] = answered_by
             if duration:
                 call["duration"] = duration
-            return
-    # New call entry
-    campaign["calls"].append({
-        "call_sid": call_sid,
-        "name": name,
-        "phone": phone,
-        "status": status,
-        "answered_by": answered_by,
-        "timestamp": datetime.utcnow().isoformat(),
-        "duration": duration,
-    })
+            found = True
+            break
+
+    if not found:
+        # New call entry
+        campaign["calls"].append({
+            "call_sid": call_sid,
+            "name": name,
+            "phone": phone,
+            "status": status,
+            "answered_by": answered_by,
+            "timestamp": datetime.utcnow().isoformat(),
+            "duration": duration,
+        })
+
+    # Always recount stats after any update
     campaign["dialed"] = len(campaign["calls"])
-    # Recount stats
     campaign["answered"] = sum(1 for c in campaign["calls"] if c["status"] == "answered")
     campaign["voicemail_dropped"] = sum(1 for c in campaign["calls"] if c["status"] == "voicemail_dropped")
     campaign["no_answer"] = sum(1 for c in campaign["calls"] if c["status"] == "no_answer")
@@ -432,18 +437,26 @@ async def connect_call(request: Request):
                 })
             except Exception:
                 pass
-            # Record voicemail drop in campaign
+            # Record voicemail drop in campaign — try current_campaign first,
+            # then fall back to most recent campaign file on disk
             with campaign_lock:
-                if current_campaign is not None:
+                target = current_campaign
+                if target is None:
+                    # Campaign was finalized before this callback — load from disk
+                    all_camps = _list_campaigns()
+                    if all_camps:
+                        target = _load_campaign(all_camps[0]["id"])
+                if target is not None:
                     _update_campaign_call(
-                        current_campaign,
+                        target,
                         call_sid=call_sid,
                         name="",
                         phone=form.get("To", ""),
                         status="voicemail_dropped",
                         answered_by=answered_by,
                     )
-                    _save_campaign(current_campaign)
+                    _save_campaign(target)
+                    logger.info("Recorded voicemail_dropped in campaign %s", target.get("id"))
             return Response(content=twiml, media_type="text/xml")
 
         if agent_mode == "mobile":
@@ -669,6 +682,24 @@ async def call_status(request: Request):
     answered_by = form.get("AnsweredBy", "")
     logger.info("Call status update: SID=%s status=%s", call_sid, call_status_val)
 
+    # Record call when first seen (initiated) so it exists in campaign before /connect fires
+    if call_status_val == "initiated":
+        with campaign_lock:
+            target = current_campaign
+            if target is None:
+                all_camps = _list_campaigns()
+                if all_camps:
+                    target = _load_campaign(all_camps[0]["id"])
+            if target is not None:
+                _update_campaign_call(
+                    target,
+                    call_sid=call_sid,
+                    name="",
+                    phone=to_number,
+                    status="initiated",
+                )
+                _save_campaign(target)
+
     # If call is terminal, make sure agent is freed
     if call_status_val in ("completed", "failed", "busy", "no-answer", "canceled"):
         # Clean up connected_calls tracking
@@ -694,7 +725,12 @@ async def call_status(request: Request):
 
         # Update campaign record with terminal call status
         with campaign_lock:
-            if current_campaign is not None:
+            target = current_campaign
+            if target is None:
+                all_camps = _list_campaigns()
+                if all_camps:
+                    target = _load_campaign(all_camps[0]["id"])
+            if target is not None:
                 status_map = {
                     "completed": "answered",
                     "no-answer": "no_answer",
@@ -704,7 +740,7 @@ async def call_status(request: Request):
                 }
                 mapped_status = status_map.get(call_status_val, call_status_val)
                 _update_campaign_call(
-                    current_campaign,
+                    target,
                     call_sid=call_sid,
                     name="",
                     phone=to_number,
@@ -712,7 +748,7 @@ async def call_status(request: Request):
                     answered_by=answered_by,
                     duration=call_duration,
                 )
-                _save_campaign(current_campaign)
+                _save_campaign(target)
 
     await manager.broadcast({
         "event": "call_status",
