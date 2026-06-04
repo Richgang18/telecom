@@ -338,18 +338,16 @@ async def ping():
 @app.post("/ringing")
 async def ringing(request: Request):
     """
-    Called by SignalWire immediately when an outbound call connects (before AMD finishes).
-    Returns a long Pause to keep the call alive while AMD detects human vs machine.
-    The async_amd_status_callback will fire /connect once detection is complete.
+    Legacy endpoint — now redirects to /connect immediately.
+    Previously returned a Pause while AMD detected, but we now
+    use /connect directly as the initial URL.
     """
     form = await request.form()
     call_sid = form.get("CallSid", "unknown")
     call_status = form.get("CallStatus", "unknown")
-    logger.info("/ringing: SID=%s status=%s — holding for AMD", call_sid, call_status)
-    return Response(
-        content='<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="30"/></Response>',
-        media_type="text/xml"
-    )
+    logger.info("/ringing hit (legacy): SID=%s status=%s — forwarding to /connect", call_sid, call_status)
+    # Forward to connect_call handler
+    return await connect_call(request)
 
 
 @app.post("/connect")
@@ -424,6 +422,7 @@ async def connect_call(request: Request):
                 f'<Response>'
                 f'<Pause length="{pause}"/>'
                 f'<Play>{webhook_base}/voicemail-audio</Play>'
+                f'<Pause length="3"/>'
                 f'<Hangup/>'
                 f'</Response>'
             )
@@ -731,14 +730,35 @@ async def call_status(request: Request):
                 if all_camps:
                     target = _load_campaign(all_camps[0]["id"])
             if target is not None:
-                status_map = {
-                    "completed": "answered",
-                    "no-answer": "no_answer",
-                    "busy": "no_answer",
-                    "failed": "failed",
-                    "canceled": "failed",
+                # Determine correct status based on answered_by (AMD result)
+                machine_results = {
+                    "machine_start", "machine_end", "machine_end_beep",
+                    "machine_end_silence", "machine_end_other", "fax"
                 }
-                mapped_status = status_map.get(call_status_val, call_status_val)
+                if call_status_val == "completed":
+                    if answered_by in machine_results:
+                        mapped_status = "voicemail_dropped"
+                    elif answered_by == "human":
+                        mapped_status = "answered"
+                    else:
+                        # unknown or empty — check if voicemail_dropped already recorded
+                        existing = next(
+                            (c for c in target.get("calls", []) if c["call_sid"] == call_sid),
+                            None
+                        )
+                        if existing and existing.get("status") == "voicemail_dropped":
+                            mapped_status = "voicemail_dropped"
+                        else:
+                            mapped_status = "answered"
+                else:
+                    status_map = {
+                        "no-answer": "no_answer",
+                        "busy": "no_answer",
+                        "failed": "failed",
+                        "canceled": "failed",
+                    }
+                    mapped_status = status_map.get(call_status_val, call_status_val)
+
                 _update_campaign_call(
                     target,
                     call_sid=call_sid,
