@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/loginFragment">
+
+    <fragment
+        android:id="@+id/loginFragment"
+        android:name="com.smartdialer.agent.ui.login.LoginFragment"
+        android:label="Login"
+        tools:layout="@layout/fragment_login">
+        <action
+            android:id="@+id/action_login_to_leads"
+            app:destination="@id/leadsFragment"
+            app:popUpTo="@id/loginFragment"
+            app:popUpToInclusive="true" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/leadsFragment"
+        android:name="com.smartdialer.agent.ui.leads.LeadsFragment"
+        android:label="Leads"
+        tools:layout="@layout/fragment_leads">
+        <action
+            android:id="@+id/action_leads_to_detail"
+            app:destination="@id/leadDetailFragment" />
+        <action
+            android:id="@+id/activeCallFragment"
+            app:destination="@id/activeCallFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/leadDetailFragment"
+        android:name="com.smartdialer.agent.ui.leads.LeadDetailFragment"
+        android:label="Lead Detail"
+        tools:layout="@layout/fragment_lead_detail">
+        <argument android:name="leadId"     android:argType="string" />
+        <argument android:name="leadName"   android:argType="string" />
+        <argument android:name="leadPhone"  android:argType="string" />
+        <argument android:name="leadEmail"  android:argType="string" android:defaultValue="" />
+        <argument android:name="leadNotes"  android:argType="string" android:defaultValue="" />
+        <argument android:name="leadStatus" android:argType="string" android:defaultValue="new" />
+        <action
+            android:id="@+id/action_detail_to_call"
+            app:destination="@id/activeCallFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/activeCallFragment"
+        android:name="com.smartdialer.agent.ui.call.ActiveCallFragment"
+        android:label="Active Call"
+        tools:layout="@layout/fragment_active_call" />
+
+</navigation>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Smart Dialer</string>
+    <string name="login">Login</string>
+    <string name="leads">Leads</string>
+    <string name="active_call">Active Call</string>
+    <string name="call_now">Call Now</string>
+    <string name="end_call">End Call</string>
+    <string name="transfer">Transfer</string>
+    <string name="notes">Notes</string>
+    <string name="back">Back</string>
+    <string name="recording">● Recording</string>
+    <string name="ringing">Ringing...</string>
+    <string name="connected">Connected</string>
+    <string name="call_ended">Call ended</string>
+</resources>

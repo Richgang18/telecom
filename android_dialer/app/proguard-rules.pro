@@ -1,0 +1,4 @@
+-keep class com.smartdialer.agent.data.** { *; }
+-keep class retrofit2.** { *; }
+-keepattributes Signature
+-keepattributes *Annotation*

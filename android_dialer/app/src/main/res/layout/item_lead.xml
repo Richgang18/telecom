@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginHorizontal="12dp"
+    android:layout_marginTop="8dp"
+    app:cardBackgroundColor="#16213E"
+    app:cardCornerRadius="8dp"
+    app:cardElevation="2dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="14dp"
+        android:gravity="center_vertical">
+
+        <!-- Left: name + phone + status -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#DFE6E9"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvPhone"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#B2BEC3"
+                android:textSize="13sp"
+                android:fontFamily="monospace"
+                android:layout_marginTop="2dp" />
+
+            <TextView
+                android:id="@+id/tvStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:layout_marginTop="4dp" />
+
+        </LinearLayout>
+
+        <!-- Call button -->
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/btnCall"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:src="@android:drawable/ic_menu_call"
+            app:backgroundTint="#00B894"
+            app:fabSize="mini"
+            app:elevation="0dp" />
+
+    </LinearLayout>
+</androidx.cardview.widget.CardView>
