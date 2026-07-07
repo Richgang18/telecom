@@ -28,6 +28,9 @@
         <action
             android:id="@+id/activeCallFragment"
             app:destination="@id/activeCallFragment" />
+        <action
+            android:id="@+id/action_leads_to_accent"
+            app:destination="@id/accentFragment" />
     </fragment>
 
     <fragment
@@ -51,5 +54,11 @@
         android:name="com.smartdialer.agent.ui.call.ActiveCallFragment"
         android:label="Active Call"
         tools:layout="@layout/fragment_active_call" />
+
+    <fragment
+        android:id="@+id/accentFragment"
+        android:name="com.smartdialer.agent.ui.accent.AccentFragment"
+        android:label="Accent Conversion"
+        tools:layout="@layout/fragment_accent" />
 
 </navigation>

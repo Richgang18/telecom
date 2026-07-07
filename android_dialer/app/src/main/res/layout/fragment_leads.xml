@@ -30,7 +30,17 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textColor="#636E72"
-            android:textSize="13sp" />
+            android:textSize="13sp"
+            android:layout_marginEnd="8dp" />
+
+        <ImageButton
+            android:id="@+id/btnAccent"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@android:drawable/ic_btn_speak_now"
+            android:background="?selectableItemBackgroundBorderless"
+            android:tint="#0984E3"
+            android:contentDescription="Accent Conversion" />
     </LinearLayout>
 
     <!-- Search -->

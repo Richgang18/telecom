@@ -828,7 +828,7 @@ async def synthesize_and_inject(text: str, stream_id: str, cartesia_key: str, vo
                 },
                 json={
                     "transcript": text,
-                    "model_id": "sonic-english",
+                    "model_id": "sonic-3.5",
                     "voice": {"mode": "id", "id": voice_id},
                     "output_format": {
                         "container": "raw",

@@ -29,6 +29,10 @@ class LeadsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        binding.btnAccent.setOnClickListener {
+            findNavController().navigate(R.id.action_leads_to_accent)
+        }
+
         adapter = LeadsAdapter(
             onDial = { lead -> viewModel.dial(lead) },
             onView = { lead -> navigateToDetail(lead) },

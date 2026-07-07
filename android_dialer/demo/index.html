@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Accent Conversion Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a1628;
+    color: #dfe6e9;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  h1 { font-size: 28px; color: #e94560; margin-bottom: 6px; }
+  .subtitle { color: #636e72; font-size: 14px; margin-bottom: 40px; text-align: center; }
+  .card {
+    background: #16213e;
+    border-radius: 16px;
+    padding: 32px;
+    width: 100%;
+    max-width: 560px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .flow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 32px;
+    flex-wrap: wrap;
+  }
+  .flow-step {
+    background: #0a1628;
+    border: 1px solid #2d3436;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    color: #b2bec3;
+    text-align: center;
+  }
+  .flow-arrow { color: #636e72; font-size: 18px; }
+  .flow-step.active { border-color: #e94560; color: #e94560; }
+
+  #btnToggle {
+    width: 100%;
+    height: 64px;
+    border: none;
+    border-radius: 12px;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+    background: #e94560;
+    color: white;
+    letter-spacing: 1px;
+    transition: all 0.2s;
+    margin-bottom: 24px;
+  }
+  #btnToggle.recording { background: #d63031; animation: pulse 1.2s infinite; }
+  #btnToggle:disabled { background: #2d3436; cursor: not-allowed; }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(214,48,49,0.4); }
+    50% { box-shadow: 0 0 0 12px rgba(214,48,49,0); }
+  }
+
+  .status-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    gap: 10px;
+  }
+  .status-box {
+    flex: 1;
+    background: #0a1628;
+    border-radius: 8px;
+    padding: 12px;
+    border: 1px solid #2d3436;
+  }
+  .status-label { font-size: 10px; color: #636e72; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .status-value { font-size: 13px; color: #dfe6e9; }
+  .status-value.green { color: #00b894; }
+  .status-value.red { color: #e94560; }
+
+  #transcript {
+    background: #0a1628;
+    border: 1px solid #2d3436;
+    border-radius: 8px;
+    padding: 14px;
+    min-height: 80px;
+    margin-bottom: 16px;
+    font-size: 15px;
+    color: #b2bec3;
+    line-height: 1.6;
+  }
+  #transcript .label { font-size: 10px; color: #636e72; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  #transcript .text { color: #dfe6e9; }
+
+  .converted-box {
+    background: linear-gradient(135deg, #0984e3 0%, #6c5ce7 100%);
+    border-radius: 8px;
+    padding: 14px;
+    min-height: 60px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .converted-box .icon { font-size: 24px; }
+  .converted-box .info { flex: 1; }
+  .converted-box .info .label { font-size: 10px; color: rgba(255,255,255,0.7); text-transform: uppercase; letter-spacing: 1px; }
+  .converted-box .info .val { font-size: 14px; color: white; font-weight: 600; }
+
+  .latency { text-align: center; font-size: 12px; color: #636e72; margin-top: 8px; }
+  .latency span { color: #fdcb6e; font-weight: 700; }
+
+  audio { display: none; }
+</style>
+</head>
+<body>
+
+<h1>🎙 Accent Conversion</h1>
+<p class="subtitle">Speak in any accent → hear it back in American English</p>
+
+<div class="card">
+  <!-- Flow diagram -->
+  <div class="flow">
+    <div class="flow-step" id="step1">Your Voice</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step" id="step2">Deepgram STT</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step" id="step3">Cartesia TTS</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step" id="step4">American Voice</div>
+  </div>
+
+  <!-- Main button -->
+  <button id="btnToggle" onclick="toggleRecording()">🎤 HOLD TO SPEAK</button>
+
+  <!-- Status row -->
+  <div class="status-row">
+    <div class="status-box">
+      <div class="status-label">Status</div>
+      <div class="status-value" id="statusVal">Ready</div>
+    </div>
+    <div class="status-box">
+      <div class="status-label">Model</div>
+      <div class="status-value green">Aura 2 Odysseus</div>
+    </div>
+    <div class="status-box">
+      <div class="status-label">Latency</div>
+      <div class="status-value" id="latencyVal">—</div>
+    </div>
+  </div>
+
+  <!-- Transcript -->
+  <div id="transcript">
+    <div class="label">What you said</div>
+    <div class="text" id="transcriptText">Press the button and speak...</div>
+  </div>
+
+  <!-- Converted -->
+  <div class="converted-box">
+    <div class="icon">🔊</div>
+    <div class="info">
+      <div class="label">Converted American Voice</div>
+      <div class="val" id="convertedText">Waiting for speech...</div>
+    </div>
+  </div>
+
+  <div class="latency">Pipeline: Deepgram ~<span>100ms</span> + Cartesia ~<span>80ms</span> = ~<span>180ms</span> total</div>
+
+  <audio id="audioPlayer" autoplay></audio>
+</div>
+
+<script>
+let ws = null;
+let mediaRecorder = null;
+let isRecording = false;
+let audioCtx = null;
+let t0 = null;
+
+const btn       = document.getElementById('btnToggle');
+const statusEl  = document.getElementById('statusVal');
+const latencyEl = document.getElementById('latencyVal');
+const transcriptEl  = document.getElementById('transcriptText');
+const convertedEl   = document.getElementById('convertedText');
+const audioPlayer   = document.getElementById('audioPlayer');
+
+function setStep(n) {
+  ['step1','step2','step3','step4'].forEach((id, i) => {
+    document.getElementById(id).classList.toggle('active', i < n);
+  });
+}
+
+async function toggleRecording() {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    await startRecording();
+  }
+}
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: {
+      channelCount: 1,
+      sampleRate: 16000,
+      echoCancellation: true,
+      noiseSuppression: true,
+    }});
+
+    // Connect WebSocket
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${protocol}://${location.host}/stream`);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      statusEl.textContent = 'Recording...';
+      statusEl.className   = 'status-value red';
+      setStep(1);
+    };
+
+    ws.onmessage = async (e) => {
+      if (typeof e.data === 'string') {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'transcript') {
+          transcriptEl.textContent = msg.text;
+          convertedEl.textContent  = msg.text;
+          t0 = performance.now();
+          setStep(3);
+        }
+      } else {
+        // Audio bytes received
+        const elapsed = t0 ? Math.round(performance.now() - t0) : '?';
+        latencyEl.textContent = `${elapsed}ms`;
+        setStep(4);
+        playAudio(e.data);
+      }
+    };
+
+    ws.onerror = (err) => {
+      statusEl.textContent = 'Connection error';
+      statusEl.className = 'status-value red';
+    };
+
+    ws.onclose = () => {
+      if (isRecording) stopRecording();
+    };
+
+    // ScriptProcessor to get raw PCM at 16kHz
+    audioCtx = new AudioContext({ sampleRate: 16000 });
+    const source = audioCtx.createMediaStreamSource(stream);
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+    processor.onaudioprocess = (e) => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const float32 = e.inputBuffer.getChannelData(0);
+        const int16   = new Int16Array(float32.length);
+        for (let i = 0; i < float32.length; i++) {
+          int16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32768));
+        }
+        ws.send(int16.buffer);
+        setStep(2);
+      }
+    };
+
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+
+    isRecording = true;
+    btn.textContent = '⏹ STOP';
+    btn.classList.add('recording');
+
+  } catch (err) {
+    alert('Microphone access denied: ' + err.message);
+  }
+}
+
+function stopRecording() {
+  isRecording = false;
+  btn.textContent = '🎤 HOLD TO SPEAK';
+  btn.classList.remove('recording');
+  statusEl.textContent = 'Processing...';
+  statusEl.className   = 'status-value';
+
+  if (ws) {
+    ws.send(JSON.stringify({ type: 'stop' }));
+    setTimeout(() => { ws && ws.close(); ws = null; }, 1000);
+  }
+  if (audioCtx) {
+    audioCtx.close();
+    audioCtx = null;
+  }
+  setStep(0);
+  setTimeout(() => {
+    statusEl.textContent = 'Ready';
+    statusEl.className   = 'status-value';
+  }, 2000);
+}
+
+function playAudio(arrayBuffer) {
+  const blob = new Blob([arrayBuffer], { type: 'audio/wav' });
+  const url  = URL.createObjectURL(blob);
+  audioPlayer.src = url;
+  audioPlayer.play().catch(e => console.error('Play error:', e));
+  audioPlayer.onended = () => URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
