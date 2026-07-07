@@ -30,6 +30,42 @@ async def index():
     return HTMLResponse(HTML.read_text(encoding="utf-8"))
 
 
+@app.get("/tts")
+async def tts_page():
+    """Text-to-American-voice demo — no microphone needed."""
+    from tts_demo import TTS_HTML
+    from fastapi.responses import HTMLResponse as HR
+    return HR(TTS_HTML)
+
+
+@app.post("/speak")
+async def speak_endpoint(request: Request):
+    """REST endpoint: POST JSON {text} → WAV audio in American voice."""
+    body = await request.json()
+    text = body.get("text", "").strip()
+    if not text:
+        return Response("No text", status_code=400)
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(
+            "https://api.cartesia.ai/tts/bytes",
+            headers={
+                "X-API-Key": CARTESIA_KEY,
+                "Cartesia-Version": "2024-06-10",
+                "Content-Type": "application/json",
+            },
+            json={
+                "transcript": text,
+                "model_id": "sonic-3.5",
+                "voice": {"mode": "id", "id": CARTESIA_VOICE_ID},
+                "output_format": {"container": "wav", "encoding": "pcm_f32le", "sample_rate": 24000},
+            },
+        )
+    if r.status_code != 200:
+        return Response(r.text, status_code=500)
+    return Response(content=r.content, media_type="audio/wav",
+                    headers={"Cache-Control": "no-cache"})
+
+
 @app.websocket("/stream")
 async def stream(ws: WebSocket):
     """
