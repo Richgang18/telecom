@@ -136,7 +136,10 @@ async function speak() {
 
     if (!r.ok) {
       const err = await r.text();
-      alert('Error: ' + err);
+      document.getElementById('result').style.display = 'block';
+      document.getElementById('result').style.borderLeftColor = '#d63031';
+      document.getElementById('spokenText').textContent = 'Error: ' + err;
+      document.getElementById('latency').textContent = '—';
       return;
     }
 
@@ -149,14 +152,17 @@ async function speak() {
     document.getElementById('spokenText').textContent = text;
     document.getElementById('latency').textContent = elapsed + 'ms';
     document.getElementById('result').style.display = 'block';
-
-    btn.textContent = '🔊 Playing...';
-    await audio.play();
+    document.getElementById('result').style.borderLeftColor = '#0984e3';
 
     audio.onended = () => {
       URL.revokeObjectURL(url);
       document.querySelectorAll('.step').forEach(s => s.className = 'step');
     };
+    audio.play().catch(e => {
+      // Autoplay blocked — show download link
+      document.getElementById('spokenText').innerHTML =
+        text + '<br><br><a href="' + url + '" download="american_voice.wav" style="color:#0984e3">⬇ Download audio</a>';
+    });
 
   } catch (e) {
     alert('Failed: ' + e.message);
