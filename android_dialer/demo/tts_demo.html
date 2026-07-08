@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>American Voice Demo</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#0a1628; color:#dfe6e9;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  min-height:100vh; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; padding:24px;
+}
+h1 { font-size:26px; color:#e94560; margin-bottom:6px; text-align:center; }
+.sub { color:#636e72; font-size:13px; margin-bottom:36px; text-align:center; }
+.card { background:#16213e; border-radius:16px; padding:28px; width:100%; max-width:560px; }
+.flow {
+  display:flex; align-items:center; justify-content:center;
+  gap:8px; margin-bottom:24px; flex-wrap:wrap;
+}
+.step {
+  background:#0a1628; border:1px solid #2d3436; border-radius:6px;
+  padding:6px 12px; font-size:11px; color:#b2bec3; transition:all 0.3s;
+}
+.step.done { border-color:#00b894; color:#00b894; }
+.arrow { color:#636e72; font-size:14px; }
+label { font-size:10px; color:#636e72; text-transform:uppercase;
+        letter-spacing:1px; display:block; margin-bottom:6px; }
+textarea {
+  width:100%; background:#0a1628; border:1px solid #2d3436;
+  border-radius:8px; padding:14px; color:#dfe6e9; font-size:15px;
+  resize:vertical; min-height:100px; outline:none; margin-bottom:16px;
+  line-height:1.5;
+}
+textarea:focus { border-color:#0984e3; }
+#btnSpeak {
+  width:100%; height:54px; border:none; border-radius:10px;
+  background:#e94560; color:#fff; font-size:16px; font-weight:700;
+  cursor:pointer; letter-spacing:0.5px; transition:background 0.2s;
+}
+#btnSpeak:hover { background:#c73652; }
+#btnSpeak:disabled { background:#2d3436; cursor:not-allowed; }
+.result {
+  margin-top:16px; background:#0f2d4a; border-radius:8px; padding:14px;
+  display:none; border-left:3px solid #0984e3;
+}
+.result .rlabel { font-size:10px; color:#0984e3; font-weight:700;
+                  text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; }
+.result .rtext { color:#dfe6e9; font-size:14px; line-height:1.5; }
+.meta { margin-top:8px; font-size:11px; color:#636e72; display:flex; gap:12px; flex-wrap:wrap; }
+.meta span { color:#fdcb6e; font-weight:700; }
+.examples { margin-bottom:16px; }
+.examples .ex-label { font-size:10px; color:#636e72; text-transform:uppercase;
+                       letter-spacing:1px; margin-bottom:6px; }
+.ex-btn {
+  display:inline-block; background:#0a1628; border:1px solid #2d3436;
+  border-radius:6px; padding:5px 10px; font-size:12px; color:#b2bec3;
+  cursor:pointer; margin:3px; transition:all 0.15s;
+}
+.ex-btn:hover { border-color:#0984e3; color:#0984e3; }
+.hint { font-size:11px; color:#636e72; text-align:center; margin-top:10px; }
+</style>
+</head>
+<body>
+
+<h1>🎙 American Voice Demo</h1>
+<p class="sub">Type anything → hear it spoken in a natural American English voice</p>
+
+<div class="card">
+
+  <!-- Pipeline flow -->
+  <div class="flow">
+    <div class="step" id="s1">Your Text</div>
+    <div class="arrow">→</div>
+    <div class="step" id="s2">Cartesia AI</div>
+    <div class="arrow">→</div>
+    <div class="step" id="s3">🔊 American Voice</div>
+  </div>
+
+  <!-- Example phrases -->
+  <div class="examples">
+    <div class="ex-label">Quick examples</div>
+    <span class="ex-btn" onclick="setEx(this)">Hello, how can I help you today?</span>
+    <span class="ex-btn" onclick="setEx(this)">I'm calling about your account. Do you have a moment?</span>
+    <span class="ex-btn" onclick="setEx(this)">Thank you for your time. Have a great day!</span>
+    <span class="ex-btn" onclick="setEx(this)">Let me transfer you to our specialist right away.</span>
+  </div>
+
+  <!-- Text input -->
+  <label for="txt">What should the American voice say?</label>
+  <textarea id="txt">Hello! I'm calling to follow up on your inquiry. We'd love to help you get started today. Is this a good time to talk?</textarea>
+
+  <button id="btnSpeak" onclick="speak()">🔊 SPEAK IN AMERICAN VOICE</button>
+
+  <!-- Result -->
+  <div class="result" id="result">
+    <div class="rlabel">🔊 Playing American Voice</div>
+    <div class="rtext" id="spokenText"></div>
+    <div class="meta">
+      Latency: <span id="latency">—</span> &nbsp;
+      Model: <span>sonic-3.5</span> &nbsp;
+      Voice: <span>Tyler · American Male</span>
+    </div>
+  </div>
+
+  <div class="hint">Ctrl+Enter to speak · Works on any device · No microphone needed</div>
+</div>
+
+<script>
+function setEx(el) {
+  document.getElementById('txt').value = el.textContent;
+}
+
+async function speak() {
+  const text = document.getElementById('txt').value.trim();
+  if (!text) return;
+
+  const btn = document.getElementById('btnSpeak');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating American voice...';
+
+  document.getElementById('s1').className = 'step done';
+  document.getElementById('s2').className = 'step done';
+  document.getElementById('s3').className = 'step';
+  document.getElementById('result').style.display = 'none';
+
+  const t0 = Date.now();
+
+  try {
+    const r = await fetch('/speak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!r.ok) {
+      const err = await r.text();
+      alert('Error: ' + err);
+      return;
+    }
+
+    const elapsed = Date.now() - t0;
+    const blob = await r.blob();
+    const url  = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+
+    document.getElementById('s3').className = 'step done';
+    document.getElementById('spokenText').textContent = text;
+    document.getElementById('latency').textContent = elapsed + 'ms';
+    document.getElementById('result').style.display = 'block';
+
+    btn.textContent = '🔊 Playing...';
+    await audio.play();
+
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      document.querySelectorAll('.step').forEach(s => s.className = 'step');
+    };
+
+  } catch (e) {
+    alert('Failed: ' + e.message);
+  } finally {
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = '🔊 SPEAK IN AMERICAN VOICE';
+    }, 500);
+  }
+}
+
+document.getElementById('txt').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.ctrlKey) speak();
+});
+</script>
+</body>
+</html>

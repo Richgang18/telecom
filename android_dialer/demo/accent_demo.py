@@ -10,8 +10,8 @@ import asyncio, json, os
 from pathlib import Path
 import httpx
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 DEEPGRAM_KEY = "f56a94291ae6b2329ee1afdd5e7d8d6f2aabb615"
@@ -33,9 +33,8 @@ async def index():
 @app.get("/tts")
 async def tts_page():
     """Text-to-American-voice demo — no microphone needed."""
-    from tts_demo import TTS_HTML
-    from fastapi.responses import HTMLResponse as HR
-    return HR(TTS_HTML)
+    html = Path(__file__).parent.joinpath("tts_demo.html").read_text(encoding="utf-8")
+    return HTMLResponse(html)
 
 
 @app.post("/speak")
